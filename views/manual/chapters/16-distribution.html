@@ -1,0 +1,183 @@
+<p>This chapter covers what makes the system a distribution system: buying from suppliers by <strong>allocation</strong> and <strong>pick-up</strong>, receiving stock in <strong>crates</strong> whose weight varies, following every crate until it is sold, and selling by the crate or by the kilo out of a crate. The accounting behind it (item receipts, bills, sales, cost of sales) is the same as in the rest of the system.</p>
+<h2 id="s-dist-flow">How the distribution flow works<a class="man-hash" href="#s-dist-flow" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<ol>
+<li><strong>Supplier Items</strong> lists what each supplier sells you, in which unit, at what cost.</li>
+<li><strong>Supplier Allocation</strong> records what a supplier has set aside for you on a date, for a location: so many crates, kilos or packs of each item.</li>
+<li><strong>Pick-Up Supplier Items</strong> is what the pick-up crew works from at the supplier: each crate is weighed and typed in as it is loaded.</li>
+<li><strong>Pick-up complete</strong> receives the goods into the location on an <strong>Item Receipt</strong>. Every crate becomes an open crate with its own number, weight, heads, production date and expiry date.</li>
+<li>The supplier's invoice is entered later with <strong>Enter Bill for Received Items</strong>, as for any item receipt.</li>
+<li>Crates are sold whole, or kilos are taken out of a crate, on <strong>Create Invoices</strong>, <strong>Enter Sales Receipts</strong> and the <strong>POS Register</strong>. They can be moved to another site, and converted to loose kilos.</li>
+<li>The <strong>Crate Center</strong> and the crate reports show every crate on hand, how much is left in it, and what was sold from it.</li>
+</ol>
+<div class="man-callout man-note"><div class="man-callout-t"><i class="bi bi-info-circle"></i>Who does what</div><p>As delivered, the <strong>Allocation Officer</strong> keeps the allocations and supplier items, the <strong>Pick-Up Crew</strong> sees only the pick-ups, the <strong>Inventory Clerk</strong> has the Crate Center, conversions, moves and crate reports, and the <strong>Sales Representative</strong> sells in crates. Page Access Configuration can change any of this.</p></div>
+<h2 id="s-crate-unit">The crate unit of measure<a class="man-hash" href="#s-crate-unit" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p>An item is kept in crates when its <strong>U/M set</strong> has a crate unit. Open <strong>Inventory &gt; Unit of Measure</strong>, open the set (for example <em>Kilos and crates</em>), add a unit such as <code>CRT</code> and tick <strong>Varies (crate)</strong>. The factor box is then switched off: a crate holds whatever it weighed when it was received, so the system never converts crates to kilos by a fixed number. A set can have one crate unit.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_uom.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_uom.jpg" alt="A U/M set with a crate unit whose kilos vary" width="1094" height="620" loading="lazy" decoding="async"></a><figcaption>A U/M set with a crate unit whose kilos vary</figcaption></figure>
+<p>The base unit of the set is what a crate is measured in: <strong>kilos</strong> for meat and poultry, <strong>packs</strong> for packed goods (for example a crate of 40 packs of bola-bola). Stock, costs and prices stay in the base unit; the crate count is kept beside it. A line in crates shows both, for example <em>2 CRT = 25.32 kg</em>.</p>
+<h2 id="pg-vend-supplier_items">Supplier Items<a class="man-hash" href="#pg-vend-supplier_items" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Where to find it:</strong> Vendors &gt; Distribution &gt; Supplier Items.</p>
+<p>For each supplier, the items it sells you, the unit it allocates them in (crates, kilos or packs), the supplier's own code for the item and the last cost. The list fills the allocation form when <strong>Go</strong> is pressed, in the order set here, and the last cost is the cost of the item receipt made at pick-up. Each pick-up updates the last cost.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_supplier_items.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_supplier_items.jpg" alt="Supplier Items" width="1094" height="421" loading="lazy" decoding="async"></a><figcaption>Supplier Items</figcaption></figure>
+<h2 id="pg-vend-allocations">Supplier Allocation<a class="man-hash" href="#pg-vend-allocations" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Where to find it:</strong> Vendors &gt; Distribution &gt; Supplier Allocation. The list shows every allocation with its date, supplier, location, who picks it up and its status; filter it by date, supplier, location and status.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_alloc_list.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_alloc_list.jpg" alt="The list of allocations" width="1094" height="489" loading="lazy" decoding="async"></a><figcaption>The list of allocations</figcaption></figure>
+<h3 id="s-alloc-new">Recording an allocation<a class="man-hash" href="#s-alloc-new" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<ol>
+<li>Press <strong>New allocation</strong>.</li>
+<li>Choose the <strong>Supplier</strong>, the <strong>Date</strong> of the pick-up and the <strong>Location</strong> the goods are received into, then press <strong>Go</strong>. The supplier's items are listed.</li>
+<li>Choose who picks it up under <strong>Assigned to</strong> (a user, who then sees it under Only mine), or type a driver or helper who is not a user.</li>
+<li>Type the <strong>Quantity</strong> allocated of each item in its unit. A line with a quantity is ticked under <strong>Use</strong>; untick a line to leave it out. <strong>Copy</strong> repeats a line (the same item in another unit), the bin removes it, and <strong>Add another item</strong> adds an item the supplier list does not have.</li>
+<li>Press <strong>Save</strong> (or <strong>Save &amp; New</strong>).</li>
+</ol>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_alloc_form.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_alloc_form.jpg" alt="An allocation with two items used" width="1094" height="784" loading="lazy" decoding="async"></a><figcaption>An allocation with two items used</figcaption></figure>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Button</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>New allocation</strong></td>
+<td>Starts a blank allocation.</td>
+</tr>
+<tr>
+<td><strong>Reset</strong></td>
+<td>Puts the form back as it was last saved.</td>
+</tr>
+<tr>
+<td><strong>Save</strong>, <strong>Save &amp; New</strong></td>
+<td>Saves the allocation; Save &amp; New starts another one for the same date and location.</td>
+</tr>
+<tr>
+<td><strong>Close</strong></td>
+<td>Goes back to the list without saving.</td>
+</tr>
+<tr>
+<td><strong>Cancel allocation</strong></td>
+<td>Marks an allocation that will not be picked up as Cancelled. It stays on the list.</td>
+</tr>
+</tbody>
+</table></div>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Allocated</strong></td>
+<td>Saved, nothing picked up yet. Everything can still be changed.</td>
+</tr>
+<tr>
+<td><strong>Being picked up</strong></td>
+<td>At least one item has been weighed or picked up.</td>
+</tr>
+<tr>
+<td><strong>Received</strong></td>
+<td>Pick-up complete; the item receipt is linked beside the status.</td>
+</tr>
+<tr>
+<td><strong>Cancelled</strong></td>
+<td>Will not be picked up.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="pg-vend-pickup">Pick-Up Supplier Items<a class="man-hash" href="#pg-vend-pickup" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Where to find it:</strong> Vendors &gt; Distribution &gt; Pick-Up Supplier Items. It is laid out for a phone, since the crew uses it at the supplier.</p>
+<p>The page shows the pick-ups of one day; the arrows beside the date move a day back or forward. <strong>Only the pick-ups assigned to me</strong> hides everyone else's. Each supplier is a card with its location, who picks it up, the allocation number and a progress line (items done, crates weighed). Tap a card to open it.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_pickup.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_pickup.jpg" alt="A pick-up opened, with the items allocated" width="1094" height="593" loading="lazy" decoding="async"></a><figcaption>A pick-up opened, with the items allocated</figcaption></figure>
+<h3 id="s-weigh-crates">Weighing crates<a class="man-hash" href="#s-weigh-crates" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<ol>
+<li>Press <strong>Weigh crates</strong> on an item in crates. The crate window opens with one row for each crate allocated.</li>
+<li>Type each crate's <strong>Weight</strong> as it comes off the scale; <strong>Enter</strong> moves to the next crate. Type the <strong>Heads</strong> (birds or pieces) when they are counted.</li>
+<li>Type the <strong>Production date</strong> and <strong>Expiry date</strong> on the first crate and press <strong>Replicate</strong> to copy the heads and dates to the crates below.</li>
+<li>The crate numbers are given in sequence; change one to match the number painted on the crate if needed. <strong>Add crates</strong> adds more rows when more crates were loaded than allocated; the x removes a crate.</li>
+<li>Press <strong>Save crates</strong>. The scale readout at the bottom shows the total weight and the number of crates.</li>
+</ol>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_weigh.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_weigh.jpg" alt="The crate window while weighing" width="1140" height="524" loading="lazy" decoding="async"></a><figcaption>The crate window while weighing</figcaption></figure>
+<p>An item allocated by the kilo or by the pack has a box for the quantity picked up and <strong>Save</strong> instead. The circle at the right of an item is ticked when it is done. <strong>Reset</strong> clears what was picked up on that card.</p>
+<h3 id="s-pickup-complete">Completing a pick-up<a class="man-hash" href="#s-pickup-complete" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>When every item is done, choose the receiving date and press <strong>Pick-up complete</strong>. The system enters an <strong>Item Receipt</strong> for the supplier into the location, at the last cost from Supplier Items, with every crate on it. The allocation becomes Received and links to the receipt. Enter the supplier's invoice later with <strong>Enter Bill for Received Items</strong>.</p>
+<div class="man-callout man-important"><div class="man-callout-t"><i class="bi bi-exclamation-triangle"></i>Voiding the receipt</div><p>Voiding or deleting an item receipt made by a pick-up sets the allocation back to Being picked up with its weights, so it can be completed again. It is refused while any of its crates has already been sold or moved; void or change that document first.</p></div>
+<h2 id="s-receiving-crates">Receiving crates without an allocation<a class="man-hash" href="#s-receiving-crates" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Receive Items</strong>, <strong>Receive Items and Enter Bills</strong>, <strong>Enter Bills</strong> and <strong>Write Checks</strong> receive crates too. Choose the item, choose the crate unit (for example CRT) on the line, and the same crate window opens; type the crates and save. The line's quantity becomes the total kilos of the crates and its rate is per kilo. A line in the crate unit cannot be saved without its crates: the message says <em>press Crates on the line</em>. The crate button on the line shows how many crates it holds and opens the window again to change them.</p>
+<p>Two open crates can never have the same number. A crate received on a document can be changed or removed only while nothing has been sold from it.</p>
+<h2 id="s-selling-crates">Selling in crates and by the kilo<a class="man-hash" href="#s-selling-crates" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Create Invoices</strong>, <strong>Enter Sales Receipts</strong> and the <strong>POS Register</strong> sell crates in two ways:</p>
+<ul>
+<li><strong>Whole crates.</strong> Choose the crate unit on the line. The crate window lists the open crates of the item at the site with their weight left, heads, production and expiry dates (the ones expiring within three days or expired are marked). Type <strong>Crates needed</strong> and press <strong>Oldest first</strong>, or tick the crates yourself; find a crate by its number. Each crate goes whole, and the line is priced per kilo on the total weight.</li>
+<li><strong>Kilos out of a crate.</strong> Sell the item in kilos and press the crate button on the line. Tick the crate it comes from and type the kilos under <strong>Take</strong>; a sale can take from several crates.</li>
+</ul>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_crate_pick.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_crate_pick.jpg" alt="Choosing two whole crates, oldest first" width="1140" height="804" loading="lazy" decoding="async"></a><figcaption>Choosing two whole crates, oldest first</figcaption></figure>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_invoice_lines.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_invoice_lines.jpg" alt="The invoice line: 2 crates and their total weight" width="1012" height="148" loading="lazy" decoding="async"></a><figcaption>The invoice line: 2 crates and their total weight</figcaption></figure>
+<p>What is taken out is deducted from the crate. A crate of 12.87 kg from which 6 kg is sold has 6.87 kg left and stays open; when the rest is sold the crate is closed as Sold and leaves the crates on hand. The document shows and prints, under each line, the crates it took with their kilos and expiry dates.</p>
+<h3 id="s-loose-rule">Stock in crates is sold by the crate<a class="man-hash" href="#s-loose-rule" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>Stock received in crates is sold by the crate. A sale line that names no crate may only take the <strong>loose</strong> stock of the site: stock that is not in any open crate (stock received by the kilo, or crates converted to kilos). If it asks for more, it is refused and the message says how much is loose. Press the crate button to choose the crate, sell by the crate, or convert crates first. The items of an item group sold together are not held to this rule.</p>
+<h3 id="s-pos-crates">At the POS Register<a class="man-hash" href="#s-pos-crates" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>At the register, choosing an item whose sales unit is the crate, or typing more kilos than are loose, opens the crate window. The cart shows a crate button on the line with the number of crates; tap it to change them. A suspended sale keeps its crates; a recalled sale brings them back, and a voided or returned sale puts them back.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_pos.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_pos.jpg" alt="The POS Register" width="1366" height="860" loading="lazy" decoding="async"></a><figcaption>The POS Register</figcaption></figure>
+<div class="man-callout man-tip"><div class="man-callout-t"><i class="bi bi-lightbulb"></i>Voids, edits and deletes</div><p>Editing a sale gives back the crates it no longer takes; voiding or deleting it puts every kilo back into its crates, and a crate closed by the sale opens again.</p></div>
+<h2 id="pg-inv-crates">Crate Center<a class="man-hash" href="#pg-inv-crates" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Where to find it:</strong> Inventory &gt; Crates &gt; Crate Center.</p>
+<p>The top lists the crates by item and site: how many, what is in them, the average per crate and the earliest expiry. Below is every crate, oldest expiry first, with its number, heads, what it was received with, what is left (the bar shows how full it is), the dates, the supplier and the status. Expiry dates within three days are marked, expired ones in red. Filter by site, item, status (Open, Sold, Converted or all), expiry (within 3, 7, 15 or 30 days, or expired) and crate number.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_crate_center.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_crate_center.jpg" alt="The Crate Center" width="1094" height="860" loading="lazy" decoding="async"></a><figcaption>The Crate Center</figcaption></figure>
+<p>Tick crates and press <strong>Convert ticked to kilos</strong> or <strong>Move ticked</strong> to go to those pages with the crates chosen. Click a crate number to open its sheet: what it holds, its dates and how many days are left, where it came from, and its whole history (received, sold, moved, taken by an adjustment, converted).</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_crate_sheet.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_crate_sheet.jpg" alt="A crate and its history" width="1094" height="488" loading="lazy" decoding="async"></a><figcaption>A crate and its history</figcaption></figure>
+<h2 id="pg-inv-crate_convert">Convert Crates to Kilos<a class="man-hash" href="#pg-inv-crate_convert" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Where to find it:</strong> Inventory &gt; Crates &gt; Convert Crates to Kilos.</p>
+<p>Converting a crate stops following it crate by crate: what is left in it stays on hand as loose kilos (or packs) and is sold by the kilo. Nothing is posted and the stock on hand does not change. Tick the crates, type a note if wanted and press <strong>Convert</strong>. The conversion is in the audit trail and on the crate's history.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_crate_convert.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_crate_convert.jpg" alt="Convert Crates to Kilos" width="1094" height="860" loading="lazy" decoding="async"></a><figcaption>Convert Crates to Kilos</figcaption></figure>
+<h2 id="pg-inv-crate_move">Move Crates to Another Site<a class="man-hash" href="#pg-inv-crate_move" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p><strong>Where to find it:</strong> Inventory &gt; Crates &gt; Move Crates to Another Site.</p>
+<p>Choose the site the crates are at and the site they go to, tick the crates and press <strong>Move</strong>. The system enters an <strong>inventory transfer</strong> of their kilos, and the crates keep their numbers, weights and dates at the new site. Voiding the transfer brings them back, unless a crate has been sold or moved again since.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_crate_move.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_crate_move.jpg" alt="Move Crates to Another Site" width="1094" height="860" loading="lazy" decoding="async"></a><figcaption>Move Crates to Another Site</figcaption></figure>
+<h2 id="s-crate-rules">How crates stay in agreement with the stock<a class="man-hash" href="#s-crate-rules" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<ul>
+<li>The kilos in a site's open crates can never be more than the item's stock on hand at that site.</li>
+<li>When stock leaves without naming crates (an inventory adjustment for spoilage, a physical count, a processing order or a build), the system takes the kilos from the open crates by itself, oldest expiry first, and records it on each crate as <em>Taken by an adjustment</em>.</li>
+<li>A crate can be sold from only up to what it holds; the window refuses more.</li>
+<li>Pending and suspended sales hold their crates; voids and deletes give them back.</li>
+</ul>
+<h2 id="s-crate-reports">Crate reports<a class="man-hash" href="#s-crate-reports" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p>The crate reports are under <strong>Inventory &gt; Reports &gt; Crate Reports</strong> and in the Report Center; the allocation report is under <strong>Vendors &gt; Reports &gt; Distribution Reports</strong>. They print, export, save as PDF and can be modified like any other report.</p>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Report</th>
+<th>What it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span id="pg-rpt-crates_on_hand"></span><strong>Crates Remaining by Item</strong></td>
+<td>The open crates of each item and site: how many, the kilos (or packs) in them, the average per crate, the earliest expiry and the days left. Tick <em>Show the loose kilos</em> to add the stock not in crates and the total on hand.</td>
+</tr>
+<tr>
+<td><span id="pg-rpt-crate_detail"></span><strong>Kilos per Crate by Item</strong></td>
+<td>Every crate of each item, with the kilos received and left, its dates, days left, supplier and status.</td>
+</tr>
+<tr>
+<td><span id="pg-rpt-crates_sold"></span><strong>Crates Sold with Production and Expiry Dates</strong></td>
+<td>What was sold from each crate: the document, the customer, whole or part, the kilos, and the production and expiry dates, with the days to expiry when it was sold.</td>
+</tr>
+<tr>
+<td><span id="pg-rpt-crate_movements"></span><strong>Crate Movement History</strong></td>
+<td>Every crate movement in a period: received, sold, moved, taken by an adjustment, converted.</td>
+</tr>
+<tr>
+<td><span id="pg-rpt-crates_received"></span><strong>Crates Received by Supplier</strong></td>
+<td>The crates received from each supplier: crates, heads, kilos, the average per crate and the cost.</td>
+</tr>
+<tr>
+<td><span id="pg-rpt-alloc_pickup"></span><strong>Supplier Allocation vs Pick-Up</strong></td>
+<td>For each allocation, what was allocated and what was picked up, the difference, and the kilos.</td>
+</tr>
+</tbody>
+</table></div>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/dist_rpt_on_hand.jpg" title="Click to enlarge"><img src="assets/manual/img/dist_rpt_on_hand.jpg" alt="Crates Remaining by Item" width="1094" height="860" loading="lazy" decoding="async"></a><figcaption>Crates Remaining by Item</figcaption></figure>
+<h2 id="s-dist-dashboard">On the Home page<a class="man-hash" href="#s-dist-dashboard" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p>The Home dashboard counts the <strong>open crates in storage</strong> and how many expire within three days or have expired (click it for the Crate Center filtered to them), and lists <strong>Today's pick-ups</strong> with their status and how many items are done.</p>
