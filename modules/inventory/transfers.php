@@ -82,6 +82,12 @@ if ($a === 'edit') {
     if (!Access::siteAllowed($edit['site_id'] ? (int)$edit['site_id'] : null)) {
         Access::denyPage($pageKey, 'edit a transfer of another site on');
     }
+    // v2: crates moved with the transfer are at the other site now: such a transfer is voided and recorded again
+    if (Crates::ready() && DB::value("SELECT 1 FROM crate_movements WHERE txn_id = :t AND kind = 'transfer' LIMIT 1", ['t' => $edit['id']])) {
+        flash('warning', Txn::ref($edit) . ' moved crates to ' . (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => $edit['site2_id']])
+            . '. A transfer of crates is not edited: void it (the crates go back) and record it again.');
+        redirect(Txn::url($edit));
+    }
 } else {
     Access::require($pageKey, 'create');
 }
@@ -122,12 +128,29 @@ handle_post(function () use ($pageKey, $edit, $ownOut) {
     $want = [];
     $wantLot = [];
     $exclude = $edit ? (int)$edit['id'] : null;
+    $crated = Crates::ready() ? Crates::crateItems() : [];
     foreach ((array)($_POST['rows'] ?? []) as $r) {
         $iid = (int)($r['item_id'] ?? 0);
         if (!$iid) {
             continue;
         }
         $code = item_cache($iid)['code'];
+        // v2 distribution: crates chosen on the line go to the other site whole, keeping their numbers, heads and dates:
+        // one transfer line per crate (with the crate's production and expiry dates when the company keeps them)
+        if (isset($crated[$iid]) && trim((string)($r['crates'] ?? '')) !== '') {
+            $cr = Crates::fromRow($r, $iid, 'out', true, $code, $from, $exclude, pdate('txn_date', today()));
+            foreach ($cr['rows'] ?? [] as $c) {
+                $line = ['line_kind' => 'item', 'item_id' => $iid, 'qty' => (float)$c['qty'], 'description' => item_cache($iid)['name'], 'site_id' => $from,
+                    'uom_id' => $crated[$iid]['unit_id'], 'unit' => $crated[$iid]['code'], 'uom_qty' => 1, 'uom_factor' => round((float)$c['qty'], 6),
+                    '_crates' => ['dir' => 'move', 'rows' => [['id' => (int)$c['id']]]]];
+                if (Lots::on() && Lots::itemTracked($iid)) {
+                    $line['production_date'] = $c['prod'] ?: null;
+                    $line['expiry_date'] = $c['exp'] ?: null;
+                }
+                $lines[] = $line;
+            }
+            continue;
+        }
         // v44: an item with production and expiry dates is moved date group by date group (the sub-form under its line):
         // one line per group, each at most what the source site holds of that group
         if (Lots::on() && Lots::itemTracked($iid) && isset($r['lots']) && is_array($r['lots'])) {
@@ -178,6 +201,8 @@ handle_post(function () use ($pageKey, $edit, $ownOut) {
     if (!$lines) {
         fail('Enter at least one item and quantity.');
     }
+    // v2: stock kept in crates moves by the crate; kilos without a crate come only from the loose stock of the site
+    Crates::checkLoose($lines, $from, $exclude, 'transfer');
     $h = ['txn_date' => pdate('txn_date', today()), 'site_id' => $from, 'site2_id' => $to, 'memo' => p('memo') ?: null, 'status' => 'open'];
     if ($edit) {
         $id = Txn::save('inventory_transfer', $h, $lines, (int)$edit['id'], ['reason' => trim((string)p('reason')) ?: null]);
@@ -228,11 +253,23 @@ $ownNow = $ownOut($edit, (int)($edit['site_id'] ?? 0));
 $lotSite = (int)fv('site_id', $edit, array_key_first($sites));
 $lotGroups = $lotTracked ? Lots::forItems(array_filter(array_column($rows, 'item_id')), $lotSite, $edit ? (int)$edit['id'] : null) : [];
 $lotItemsJson = json_encode((object)array_map(fn() => 1, $lotTracked));
+// v2 distribution: items kept in crates get a Crates button: the crates chosen move whole to the other site
+$crateItems = Crates::ready() ? Crates::crateItems(array_keys($items)) : [];
+$crateOn = (bool)$crateItems;
+$colCount = 4 + ($lotTracked ? 1 : 0) + ($crateOn ? 1 : 0);
+/** The Crates cell of a line */
+$crateCell = function (array $r, string $i) use ($crateItems): string {
+    $iid = (int)($r['item_id'] ?? 0);
+    $on = $iid && isset($crateItems[$iid]);
+    return '<td class="tr-crates-cell"><input type="hidden" name="rows[' . h($i) . '][crates]" value="' . h($on ? (string)($r['crates'] ?? '') : '') . '" data-tr-crates>'
+        . '<button type="button" class="btn btn-sm crate-btn" data-tr-crate-open' . ($on ? '' : ' disabled') . ' title="Choose the crates moved: they keep their numbers and dates">'
+        . '<i class="bi bi-boxes"></i><span data-crate-label>Crates</span></button></td>';
+};
 /** The sub-form of a line: one row per date group the source site holds, with the quantity to move from it */
-$lotBox = function (array $r, string $i) use ($lotTracked, $lotGroups): string {
+$lotBox = function (array $r, string $i) use ($lotTracked, $lotGroups, $colCount): string {
     $iid = (int)($r['item_id'] ?? 0);
     $on = $iid && isset($lotTracked[$iid]);
-    $html = '<tr class="tr-lots"' . ($on ? '' : ' hidden') . '><td colspan="5"><div class="tr-lotbox">';
+    $html = '<tr class="tr-lots"' . ($on ? '' : ' hidden') . '><td colspan="' . $colCount . '"><div class="tr-lotbox">';
     if ($on) {
         $html .= tr_lot_table($lotGroups[$iid] ?? [], (array)($r['lots'] ?? []), (array)($r['lot_ids'] ?? []), $i);
     }
@@ -255,18 +292,19 @@ layout_start($edit ? 'Edit Inventory Transfer ' . $edit['txn_no'] : 'Transfer In
   <?php if ($edit): ?><?= input_field('reason', 'Reason for the change', fv('reason'), ['class' => 'col-12', 'extra' => 'maxlength="255" placeholder="Recorded in the audit trail"']) ?><?php endif; ?>
 </div></div>
 <div class="card card-body mb-3">
-  <div class="table-responsive"><table class="table table-sm tr-table" id="trTable"<?= $lotTracked ? ' data-lots-url="' . h(url('api.lots')) . '" data-items="' . h($lotItemsJson) . '"' . ($edit ? ' data-lots-txn="' . (int)$edit['id'] . '"' : '') : '' ?>>
-    <thead><tr><th>Item</th><th class="num">On hand at source</th><?= $lotTracked ? '<th class="tr-lotsum-h">Production / expiry date</th>' : '' ?><th class="num">Qty to move</th><th></th></tr></thead><tbody>
+  <div class="table-responsive"><table class="table table-sm tr-table<?= $crateOn ? ' tr-has-crates' : '' ?>" id="trTable"<?= $lotTracked ? ' data-lots-url="' . h(url('api.lots')) . '" data-items="' . h($lotItemsJson) . '"' . ($edit ? ' data-lots-txn="' . (int)$edit['id'] . '"' : '') : '' ?>>
+    <thead><tr><th>Item</th><th class="num">On hand at source</th><?= $lotTracked ? '<th class="tr-lotsum-h">Production / expiry date</th>' : '' ?><th class="num">Qty to move</th><?= $crateOn ? '<th>Crates</th>' : '' ?><th></th></tr></thead><tbody>
   <?php foreach ($rows as $i => $r): $iid = (int)($r['item_id'] ?? 0); $dated = $iid && isset($lotTracked[$iid]);
       $sum = $dated ? array_sum(array_map('to_num', (array)($r['lots'] ?? []))) : 0.0; ?>
     <tr class="tr-main<?= $dated ? ' has-lots' : '' ?>"><td><?php if (!empty($r['id'])): ?><input type="hidden" name="rows[<?= $i ?>][id]" value="<?= (int)$r['id'] ?>"><?php endif; ?><select class="form-select form-select-sm tr-item" data-f="item_id" name="rows[<?= $i ?>][item_id]" aria-label="Item"><?= options($items, $r['item_id'], '') ?></select></td>
       <td class="num tr-avail"></td><?= $lotTracked ? '<td class="tr-lotsum">' . ($dated ? tr_lot_summary($lotGroups[$iid] ?? []) : '') . '</td>' : '' ?>
       <td><input class="form-control form-control-sm text-end tr-qty" name="rows[<?= $i ?>][qty]" value="<?= h($dated ? ($sum > 0 ? rtrim(rtrim(number_format($sum, 4, '.', ''), '0'), '.') : '') : ($r['qty'] ?? '')) ?>" inputmode="decimal" placeholder="Qty to move" aria-label="Qty to move"<?= $dated ? ' readonly tabindex="-1" title="The total of the date groups below"' : '' ?>></td>
+      <?= $crateOn ? $crateCell($r, (string)$i) : '' ?>
       <td class="grid-acts"><button type="button" class="btn btn-sm btn-link p-0 grid-ins tr-ins" title="Insert a line above this one" aria-label="Insert a line above"><i class="bi bi-plus-square"></i></button><button type="button" class="btn btn-sm btn-link text-danger p-0 tr-del" aria-label="Remove the line"><i class="bi bi-x-lg"></i></button></td></tr>
     <?= $lotTracked ? $lotBox($r, (string)$i) : '' ?>
   <?php endforeach; ?>
   </tbody></table></div>
-  <template id="trTpl"><tr class="tr-main"><td><select class="form-select form-select-sm tr-item" data-f="item_id" name="rows[__i__][item_id]" aria-label="Item"><?= options($items, null, '') ?></select></td><td class="num tr-avail"></td><?= $lotTracked ? '<td class="tr-lotsum"></td>' : '' ?><td><input class="form-control form-control-sm text-end tr-qty" name="rows[__i__][qty]" inputmode="decimal" placeholder="Qty to move" aria-label="Qty to move"></td><td class="grid-acts"><button type="button" class="btn btn-sm btn-link p-0 grid-ins tr-ins" title="Insert a line above this one" aria-label="Insert a line above"><i class="bi bi-plus-square"></i></button><button type="button" class="btn btn-sm btn-link text-danger p-0 tr-del" aria-label="Remove the line"><i class="bi bi-x-lg"></i></button></td></tr><?= $lotTracked ? '<tr class="tr-lots" hidden><td colspan="5"><div class="tr-lotbox"></div></td></tr>' : '' ?></template>
+  <template id="trTpl"><tr class="tr-main"><td><select class="form-select form-select-sm tr-item" data-f="item_id" name="rows[__i__][item_id]" aria-label="Item"><?= options($items, null, '') ?></select></td><td class="num tr-avail"></td><?= $lotTracked ? '<td class="tr-lotsum"></td>' : '' ?><td><input class="form-control form-control-sm text-end tr-qty" name="rows[__i__][qty]" inputmode="decimal" placeholder="Qty to move" aria-label="Qty to move"></td><?= $crateOn ? $crateCell([], '__i__') : '' ?><td class="grid-acts"><button type="button" class="btn btn-sm btn-link p-0 grid-ins tr-ins" title="Insert a line above this one" aria-label="Insert a line above"><i class="bi bi-plus-square"></i></button><button type="button" class="btn btn-sm btn-link text-danger p-0 tr-del" aria-label="Remove the line"><i class="bi bi-x-lg"></i></button></td></tr><?= $lotTracked ? '<tr class="tr-lots" hidden><td colspan="' . $colCount . '"><div class="tr-lotbox"></div></td></tr>' : '' ?></template>
   <div class="grid-add"><?php foreach ([1 => 'Add line', 5 => 'Add 5 lines', 10 => 'Add 10 lines'] as $n => $lbl): ?><button type="button" class="btn btn-sm btn-outline-secondary tr-add" data-count="<?= $n ?>"><i class="bi bi-plus"></i> <?= h($lbl) ?></button><?php endforeach; ?></div>
 </div>
 <?php if ($edit): ?>
@@ -274,7 +312,9 @@ layout_start($edit ? 'Edit Inventory Transfer ' . $edit['txn_no'] : 'Transfer In
 <?php else: ?>
 <?= save_buttons('Record transfer', url($pageKey), Access::can($pageKey, 'create')) ?>
 <?php endif; ?>
+<?php if ($crateOn): ?><p class="small text-muted mt-2 mb-0"><i class="bi bi-boxes"></i> Items kept in crates move by the crate: press <strong>Crates</strong> on the line and tick the crates going to the outlet or van store. They arrive with their numbers, heads, weights and dates, and are followed there as before. Kilos without a crate can only come from the loose stock of the site.</p><?php endif; ?>
 </form>
+<?= $crateOn ? crates_script_tag() : '' ?>
 <script>
 (function () {
   const lookup = <?= json_encode(url('api.lookup', ['what' => 'stock'])) ?>;
@@ -388,6 +428,50 @@ layout_start($edit ? 'Edit Inventory Transfer ' . $edit['txn_no'] : 'Transfer In
     if (del) { const tr = del.closest('tr'); const sub = subOf(tr); if (sub) sub.remove(); tr.remove(); }
   });
   tbody.querySelectorAll('tr.tr-main').forEach((tr) => { refresh(tr); total(tr); });
+
+  // v2 distribution: the crates of a line (items kept in crates): chosen in the crate window, moved whole
+  const crateItems = <?= json_encode((object)$crateItems) ?>;
+  const cratesUrl = <?= json_encode(url('api.crates')) ?>;
+  const parseC = (v) => { try { const x = JSON.parse(v || '[]'); return Array.isArray(x) ? x : []; } catch (e) { return []; } };
+  const paintC = (tr) => {
+    const hid = tr.querySelector('[data-tr-crates]'), btn = tr.querySelector('[data-tr-crate-open]');
+    if (!hid || !btn) return;
+    const sel = tr.querySelector('.tr-item'), it = crateItems[sel.value];
+    btn.disabled = !it;
+    if (!it && hid.value) hid.value = '';
+    const list = parseC(hid.value), q = tr.querySelector('.tr-qty');
+    const lbl = btn.querySelector('[data-crate-label]');
+    btn.classList.toggle('has-crates', list.length > 0);
+    lbl.textContent = list.length ? list.length + (list.length === 1 ? ' crate' : ' crates') : 'Crates';
+    if (list.length) {
+      const kg = list.reduce((a, c) => a + num(c.qty), 0);
+      q.value = String(r4(kg)); q.readOnly = true; q.classList.add('qty-from-crates'); q.title = 'The total of the crates: press Crates to change it';
+      const sub = subOf(tr); if (sub) sub.hidden = true;
+    } else if (q.classList.contains('qty-from-crates')) {
+      q.readOnly = tr.classList.contains('has-lots'); q.classList.remove('qty-from-crates'); q.title = ''; q.value = '';
+      const sub = subOf(tr); if (sub && tr.classList.contains('has-lots')) sub.hidden = false;
+    }
+  };
+  const openC = (tr) => {
+    const sel = tr.querySelector('.tr-item'), it = crateItems[sel.value], hid = tr.querySelector('[data-tr-crates]');
+    if (!it || !window.CrateWindow) return;
+    const opt = sel.options[sel.selectedIndex];
+    fetch(cratesUrl + '&item_id=' + encodeURIComponent(sel.value) + '&site_id=' + encodeURIComponent(fromSite.value), { credentials: 'same-origin' }).then((r) => r.json()).then((d) => {
+      if (d.error) { alert(d.error); return; }
+      window.CrateWindow.open({ dir: 'out', whole: true, title: opt ? opt.textContent : 'Crates', base: d.base || it.base || 'kg', crates: d.crates || [], loose: d.loose, value: hid.value,
+        sub: 'Choose the crates moved from ' + (d.site || 'the source site') + '. Each crate goes whole, with its number and dates.',
+        onSave: (list) => { hid.value = list.length ? JSON.stringify(list) : ''; paintC(tr); } });
+    }).catch(() => alert('The open crates could not be loaded. Check the connection and try again.'));
+  };
+  tbody.addEventListener('click', (e) => { const b = e.target.closest('[data-tr-crate-open]'); if (b && !b.disabled) openC(b.closest('tr')); });
+  tbody.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('tr-item')) return;
+    const tr = e.target.closest('tr'), hid = tr.querySelector('[data-tr-crates]');
+    if (hid) { hid.value = ''; const q = tr.querySelector('.tr-qty'); q.classList.remove('qty-from-crates'); q.readOnly = false; }
+    paintC(tr);
+  });
+  fromSite.addEventListener('change', () => tbody.querySelectorAll('tr.tr-main').forEach((tr) => { const h = tr.querySelector('[data-tr-crates]'); if (h && h.value) { h.value = ''; paintC(tr); } }));
+  tbody.querySelectorAll('tr.tr-main').forEach(paintC);
 })();
 </script>
 <?php

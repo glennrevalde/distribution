@@ -140,7 +140,7 @@ $title = $t ? 'Sign ' . Txn::ref($t) : 'Signature request';
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" type="image/svg+xml" href="<?= h(asset('img/favicon.svg')) ?>">
+<?= Pwa::head() ?>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">

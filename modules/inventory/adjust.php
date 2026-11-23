@@ -29,7 +29,7 @@ function adjust_reasons(): array
 {
     $list = json_decode(Settings::get('inventory_adjust_reasons', ''), true);
     if (!is_array($list) || !$list) {
-        $list = ['Count difference', 'Damage', 'Theft / loss', 'Spoilage / expiry', 'Samples / promotional use', 'Found stock',
+        $list = ['Count difference', 'Shrinkage', 'Shortage', 'Damage', 'Theft / loss', 'Spoilage / expiry', 'Samples / promotional use', 'Found stock',
             'Write-down to net realizable value', 'Cost correction'];
     }
     $out = [];
@@ -265,6 +265,52 @@ function adjust_line_lot(array $r, int $iid, string $label, ?string $txnDate): a
     return [null, null, false];
 }
 
+/**
+ * v3: the lines of an item adjusted crate by crate. $line is the line as worked out from the form; $cd what
+ * Crates::adjustRows() read from its crate window. The line keeps its crates (_crates), and its quantity is the crates'
+ * differences plus the loose stock's. An item that keeps production / expiry dates gets one line per date group of its
+ * crates (the crates' own dates), and the loose stock's difference on a line of its own with the dates chosen on the form.
+ */
+function adjust_crate_lines(array $line, array $cd, bool $tracked, ?string $lotProd, ?string $lotExp, bool $lotChosen, string $code): array
+{
+    if (!$tracked) {
+        $line['qty'] = $cd['total'];
+        $line['_crates'] = ['dir' => 'adjust', 'rows' => $cd['rows']];
+        return [$line];
+    }
+    $out = [];
+    $groups = [];
+    foreach ($cd['rows'] as $r) {
+        $groups[($r['prod'] ?? '') . '|' . ($r['exp'] ?? '')][] = $r;
+    }
+    foreach ($groups as $key => $rows) {
+        [$gp, $ge] = explode('|', (string)$key);
+        $l = $line;
+        $l['qty'] = round(array_sum(array_column($rows, 'qty')), 4);
+        $l['production_date'] = $gp !== '' ? $gp : null;
+        $l['expiry_date'] = $ge !== '' ? $ge : null;
+        $l['_crates'] = ['dir' => 'adjust', 'rows' => $rows];
+        if ($out) {
+            $l['value_change'] = 0;     // a value typed goes on the first line only
+        }
+        $out[] = $l;
+    }
+    if (abs($cd['loose']) > 0.00001) {
+        if ($cd['loose'] > 0 && !$lotChosen) {
+            fail($code . ': choose the production / expiry date group the loose stock is added to, or "New dates" and enter them.');
+        }
+        $l = $line;
+        $l['qty'] = $cd['loose'];
+        $l['production_date'] = $lotProd;
+        $l['expiry_date'] = $lotExp;
+        if ($out) {
+            $l['value_change'] = 0;
+        }
+        $out[] = $l;
+    }
+    return $out;
+}
+
 handle_post(function () use ($pageKey, $mode, $siteId, $byId, $entry, $sites, $edit) {
     if (p('memorize') === '1') {
         // "Memorize Adjustment": what is typed on the form is kept as a pro-forma, to be loaded and revised next time
@@ -307,6 +353,12 @@ handle_post(function () use ($pageKey, $mode, $siteId, $byId, $entry, $sites, $e
         redirect(url($pageKey, ['a' => 'view', 'id' => $id]));
     }
     $id = adjust_post_lines(null, $pageKey, $mode, $siteId, $byId, $entry);
+    if (!empty($GLOBALS['ADJ_SHORTAGE'])) {
+        // v2: stock short put on a cashier or a sales representative: a shortage charge, collected with Receive Payments
+        $t = Txn::load($id);
+        flash('success', $GLOBALS['ADJ_COUNT'] . ' item(s) short charged to ' . $GLOBALS['ADJ_SHORTAGE'] . ' on ' . Txn::ref($t) . ' (' . money($t['total']) . ' at cost). Collect it with Receive Payments.');
+        redirect_after_save(url($pageKey, ['a' => 'new', 'entry' => $entry, 'mode' => $mode, 'site_id' => $siteId]), Txn::url($t));
+    }
     flash('success', $GLOBALS['ADJ_COUNT'] . ' item adjustment(s) posted and logged with your name and the reason.');
     redirect_after_save(url($pageKey, ['a' => 'new', 'entry' => $entry, 'mode' => $mode, 'site_id' => $siteId, 'category_ids' => gints('category_ids', 'category_id') ?: null]), url($pageKey, ['a' => 'view', 'id' => $id]));
 });
@@ -369,13 +421,20 @@ function adjust_post_lines(?array $edit, string $pageKey, string $mode, int $sit
             $qtyDiff = 0.0;
             $newQty = trim((string)($r['new_qty'] ?? ''));
             $diffTyped = trim((string)($r['qty_diff'] ?? ''));
+            // v3: the item adjusted crate by crate: the line is what its crates (and its loose stock) changed by
+            $crateData = $mode !== 'value' && Crates::ready() ? Crates::adjustRows((array)$r, $iid, $it['code'], $siteId, $edit ? (int)$edit['id'] : null) : null;
+            if ($crateData && abs($factor - 1.0) > 0.0000001) {
+                fail($it['code'] . ': its crates are adjusted in ' . Crates::baseUnit($iid) . '. Choose ' . Crates::baseUnit($iid) . ' as the U/M of the line.');
+            }
             // on an edit the adjustment is already off the books: what the site has now is the base
             $base = $edit ? Stock::onHand($iid, $siteId) : (float)$it['site_qty'];
             if ($lotChosen) {
                 // a date group chosen: the line's quantity on hand is that group's at the site
                 $base = Lots::qty($iid, $siteId, $lotProd, $lotExp);
             }
-            if ($mode !== 'value') {
+            if ($crateData) {
+                $qtyDiff = $crateData['total'];
+            } elseif ($mode !== 'value') {
                 if ($newQty !== '') {
                     $qtyDiff = to_num($newQty) * $factor - $base;
                 } elseif ($diffTyped !== '') {
@@ -390,7 +449,7 @@ function adjust_post_lines(?array $edit, string $pageKey, string $mode, int $sit
                 continue;
             }
             $lineClass = Classes::ready() && (int)($r['class_id'] ?? 0) ? (int)$r['class_id'] : $headerClass;
-            if (Lots::itemTracked($iid) && $qtyDiff > 0.00001 && !$lotChosen) {
+            if (Lots::itemTracked($iid) && $qtyDiff > 0.00001 && !$lotChosen && !$crateData) {
                 fail($it['code'] . ': choose the production / expiry date group the stock is added to, or "New dates" and enter them.');
             }
             if ($lotChosen && $qtyDiff < -0.00001 && $base + $qtyDiff < -0.00005 && Settings::get('allow_negative_stock', '1') !== '1') {
@@ -405,7 +464,13 @@ function adjust_post_lines(?array $edit, string $pageKey, string $mode, int $sit
                 $line['production_date'] = $lotProd;
                 $line['expiry_date'] = $lotExp;
             }
-            $lines[] = $line;
+            if ($crateData) {
+                foreach (adjust_crate_lines($line, $crateData, Lots::on() && Lots::itemTracked($iid), $lotProd, $lotExp, $lotChosen, $it['code']) as $cl) {
+                    $lines[] = $cl;
+                }
+            } else {
+                $lines[] = $line;
+            }
             $totalValue += abs($qtyDiff * (float)$it['avg_cost']) + abs($valueDiff);
         }
         if (!$lines) {
@@ -463,7 +528,11 @@ function adjust_post_lines(?array $edit, string $pageKey, string $mode, int $sit
                 }
                 continue;
             }
-            if ($mode !== 'value' && isset($r['new_qty']) && trim((string)$r['new_qty']) !== '') {
+            // v3: a row adjusted crate by crate: what its crates (and its loose stock) changed by
+            $crateData = $mode !== 'value' && Crates::ready() ? Crates::adjustRows((array)$r, $iid, $it['code'], $siteId, null) : null;
+            if ($crateData) {
+                $qtyDiff = $crateData['total'];
+            } elseif ($mode !== 'value' && isset($r['new_qty']) && trim((string)$r['new_qty']) !== '') {
                 $qtyDiff = to_num($r['new_qty']) - (float)$it['site_qty'];
             }
             if ($mode !== 'qty' && isset($r['new_value']) && trim((string)$r['new_value']) !== '') {
@@ -478,6 +547,13 @@ function adjust_post_lines(?array $edit, string $pageKey, string $mode, int $sit
                 'line_kind' => 'item', 'item_id' => $iid, 'qty' => $qtyDiff, 'rate' => 0, 'value_change' => $valueDiff,
                 'site_id' => $siteId, 'description' => $reason, 'class_id' => $headerClass, 'customer_id' => $customerId,
             ];
+            if ($crateData) {
+                foreach (adjust_crate_lines($line, $crateData, Lots::on() && Lots::itemTracked($iid), null, null, false, $it['code']) as $cl) {
+                    $lines[] = $cl;
+                }
+                $totalValue += abs($qtyDiff * (float)$it['avg_cost']) + abs($valueDiff);
+                continue;
+            }
             // v43: stock added to an item that keeps dates (it has none at the site yet) comes with its dates
             if (Lots::itemTracked($iid) && $qtyDiff > 0.00001) {
                 $prod = Lots::date($r['production_date'] ?? '', 'production date for ' . $it['code']);
@@ -493,8 +569,59 @@ function adjust_post_lines(?array $edit, string $pageKey, string $mode, int $sit
         }
     }
 
+    // v3: stock kept in crates is lowered crate by crate: a line that names no crate may only lower the loose stock
+    $looseOnly = [];
+    foreach ($lines as $l) {
+        if (!isset($l['_crates']) && (float)$l['qty'] < -0.00001) {
+            $looseOnly[] = ['item_id' => (int)$l['item_id'], 'site_id' => $siteId, 'qty' => round(-(float)$l['qty'], 4)];
+        }
+    }
+    Crates::checkLoose($looseOnly, $siteId, $edit ? (int)$edit['id'] : null, 'adjustment');
+
     $approver = Approval::check($pageKey, Approval::exceeds(Access::limit('max_amount'), $totalValue), 'inventory adjustment of about ' . money($totalValue));
     $GLOBALS['ADJ_COUNT'] = count($lines);
+    // v2: the stock short is put on a cashier or a sales representative: it is charged to them at cost (a receivable on the
+    // employee as a customer, collected with Receive Payments) instead of going to the adjustment account
+    $shortRep = !$edit && SalesReps::ready() ? (pint('shortage_rep_id') ?: null) : null;
+    if ($shortRep) {
+        $rep = SalesReps::row($shortRep);
+        if (!$rep) {
+            fail('Choose the cashier or sales representative the shortage is charged to again.');
+        }
+        foreach ($lines as $l) {
+            $code = $byId[(int)$l['item_id']]['code'] ?? 'An item';
+            if ((float)$l['qty'] > -0.00001 || abs((float)($l['value_change'] ?? 0)) >= 0.005) {
+                fail($code . ': only stock that is short can be charged to ' . $rep['name'] . '. Lower the quantities (no increases and no value changes), or leave "Shortage charged to" empty.');
+            }
+            foreach ($l['_crates']['rows'] ?? [] as $cr) {
+                if ((float)$cr['qty'] > 0.00001) {
+                    fail($code . ': crate ' . $cr['no'] . ' goes up; only crates that are short can be charged to ' . $rep['name'] . '.');
+                }
+            }
+        }
+        $customer = SalesReps::ensureCustomer($shortRep);
+        $sc = [];
+        foreach ($lines as $l) {
+            $q = round(-(float)$l['qty'], 4);
+            $cost = TransferClosing::unitCost((int)$l['item_id']);
+            $sc[] = array_intersect_key($l, array_flip(['item_id', 'site_id', 'class_id', 'unit', 'uom_id', 'uom_factor', 'production_date', 'expiry_date'])) + [
+                'line_kind' => 'item', 'qty' => $q, 'rate' => $cost, 'uom_rate' => $cost, 'amount' => r2($q * $cost),
+                'uom_qty' => !empty($l['uom_id']) ? round(-(float)($l['uom_qty'] ?? 0), 4) : 0,
+                'description' => ($byId[(int)$l['item_id']]['name'] ?? '') . ' (shortage: ' . $reason . ')',
+            ];
+            if (isset($l['_crates'])) {
+                // v3: the crates short go with the charge, crate by crate
+                $sc[array_key_last($sc)]['_crates'] = ['dir' => 'out', 'rows' => array_map(fn($cr) => ['id' => $cr['id'], 'qty' => round(-(float)$cr['qty'], 4),
+                    'whole' => abs((float)($cr['left'] ?? 0) + (float)$cr['qty']) <= Crates::EPS ? 1 : 0, 'no' => $cr['no'], 'prod' => $cr['prod'] ?? null, 'exp' => $cr['exp'] ?? null], $l['_crates']['rows'])];
+            }
+        }
+        $GLOBALS['ADJ_SHORTAGE'] = $rep['name'];
+        return Txn::save('shortage_charge', [
+            'txn_date' => pdate('txn_date', today()), 'due_date' => pdate('txn_date', today()), 'site_id' => $siteId, 'customer_id' => $customer, 'sales_rep_id' => $shortRep,
+            'account_id' => Accts::get('shortage_receivable'), 'class_id' => $headerClass, 'ref_no' => p('ref_no') ?: null, 'status' => 'open',
+            'memo' => mb_substr($reason . (p('memo') ? ' - ' . p('memo') : ''), 0, 255), 'approved_by' => $approver['id'] ?? null,
+        ], $sc, null, ['reason' => 'Shortage charged to ' . $rep['name'] . ' (' . $reason . ')', 'approved_by' => $approver['username'] ?? null]);
+    }
     if ($edit) {
         // the lines are new rows: the old ones go (nothing points at the lines of an adjustment)
         $note = trim((string)p('change_reason'));
@@ -540,7 +667,8 @@ foreach ($memAdj['lines'] ?? [] as $ml) {
 }
 layout_start($edit ? 'Edit Inventory Adjustment ' . $edit['txn_no'] : 'Adjust Quantity/Value on Hand', ['actions' => $edit
     ? btn_link(Txn::url($edit), 'Cancel', 'btn-outline-secondary')
-    : $loadButton . ' ' . btn_link(url($pageKey, ['a' => 'list']), 'Adjustments list', 'btn-outline-secondary', 'list-ul')]);
+    : $loadButton . ' ' . btn_link(url($pageKey, ['a' => 'list']), 'Adjustments list', 'btn-outline-secondary', 'list-ul'),
+    'js' => Crates::ready() ? ['js/crates.js'] : []]);     // v3: the crate window (crate by crate adjustments)
 echo memorized_loaded_note($memAdj);
 ?>
 <?php if ($edit): ?>
@@ -571,6 +699,10 @@ echo memorized_loaded_note($memAdj);
     }
     $itemData = [];
     $itemOpts = [];
+    // v3: items kept in crates are adjusted crate by crate (the crate window of the line)
+    $crateItemsAdj = Crates::ready() ? Crates::crateItems(array_keys($byId)) : [];
+    $crateCounts = $crateItemsAdj ? Crates::openCounts() : [];
+    $crateOn = (bool)$crateItemsAdj;
     foreach ($items as $it) {
         [$c1, $c2] = item_vals($it['code'], $it['name'], $pageKey);
         $itemOpts[(int)$it['id']] = $c1 . ' - ' . $c2;
@@ -588,6 +720,10 @@ echo memorized_loaded_note($memAdj);
             'avg' => $viewCosts ? round($avg, 4) : 0, 'total' => $totalQty, 'cat' => (int)$it['category_id'],
             'stock' => $stock[(int)$it['id']] ?? new stdClass(), 'units' => $units[(int)$it['id']] ?? [],
         ];
+        if (isset($crateItemsAdj[(int)$it['id']])) {
+            $itemData[(int)$it['id']]['crate'] = $crateItemsAdj[(int)$it['id']]['base'] ?: 'kg';
+            $itemData[(int)$it['id']]['cratesAt'] = $crateCounts[(int)$it['id']] ?? new stdClass();
+        }
         if (isset($lotTracked[(int)$it['id']])) {
             // v43: the item keeps production / expiry dates: its date groups by site
             $itemData[(int)$it['id']]['lot'] = 1;
@@ -597,9 +733,20 @@ echo memorized_loaded_note($memAdj);
     $posted = (array)($_POST['lines'] ?? []);
     if (!$posted && $edit) {
         $fq = fn($v) => rtrim(rtrim(number_format((float)$v, 4, '.', ''), '0'), '.');
+        $editCrates = Crates::forTxn((int)$edit['id']);
         foreach ($editLines as $l) {
             $iid = (int)$l['item_id'];
             $row = ['item_id' => $iid];
+            // v3: a line adjusted crate by crate opens with its crates (and the loose stock's difference)
+            $adjMoves = array_values(array_filter($editCrates[(int)$l['id']] ?? [], fn($m) => $m['kind'] === 'adjust'));
+            if ($adjMoves) {
+                $clist = json_decode(Crates::formValue($adjMoves, 'adjust'), true) ?: [];
+                $looseD = round((float)$l['qty'] - array_sum(array_column($clist, 'qty')), 4);
+                if (abs($looseD) > 0.00005) {
+                    $clist[] = ['id' => 'loose', 'qty' => $looseD];
+                }
+                $row['crates'] = json_encode($clist);
+            }
             // v43: the date group of the line: one the site still has without this adjustment, or new dates
             $lotBase = null;
             if (!empty($l['production_date']) || !empty($l['expiry_date'])) {
@@ -646,7 +793,7 @@ echo memorized_loaded_note($memAdj);
     }
     $classOn = Classes::ready();
     $lotOn = (bool)$lotTracked;
-    $lineCell = function (string $k, array $r) use ($itemOpts, $classOn, $byId, $viewCosts, $lotOn): string {
+    $lineCell = function (string $k, array $r) use ($itemOpts, $classOn, $byId, $viewCosts, $lotOn, $crateOn): string {
         $iid = (int)($r['item_id'] ?? 0);
         $h = '<tr class="adj-line">'
             . '<td data-label="Item"><select class="form-select form-select-sm adj-item" name="lines[' . $k . '][item_id]" data-combo aria-label="Item">' . options($itemOpts, $iid ?: null, '') . '</select></td>'
@@ -658,6 +805,8 @@ echo memorized_loaded_note($memAdj);
             . '<td data-label="New quantity" class="adj-q"><input class="form-control form-control-sm text-end adj-newq" name="lines[' . $k . '][new_qty]" inputmode="decimal" value="' . h($r['new_qty'] ?? '') . '" aria-label="New quantity"></td>'
             . '<td data-label="Qty difference" class="adj-q"><input class="form-control form-control-sm text-end adj-diffq" name="lines[' . $k . '][qty_diff]" inputmode="decimal" value="' . h($r['qty_diff'] ?? '') . '" aria-label="Quantity difference"></td>'
             . '<td data-label="U/M"><select class="form-select form-select-sm adj-uom" name="lines[' . $k . '][uom_id]" data-no-combo data-value="' . h($r['uom_id'] ?? '') . '" aria-label="U/M"></select></td>'
+            . ($crateOn ? '<td data-label="Crates" class="adj-q adj-cratecell"><input type="hidden" class="adj-crates" name="lines[' . $k . '][crates]" value="' . h($r['crates'] ?? '') . '">'
+                . '<button type="button" class="btn btn-sm crate-btn" data-adj-crates disabled title="Not kept in crates"><i class="bi bi-boxes"></i><span data-crate-label>Crates</span></button></td>' : '')
             . '<td data-label="Current value" class="num adj-v adj-curval"></td>'
             . '<td data-label="New value" class="adj-v"><input class="form-control form-control-sm text-end adj-newv" name="lines[' . $k . '][new_value]" inputmode="decimal" value="' . h($r['new_value'] ?? '') . '" aria-label="New value"></td>'
             . ($viewCosts ? '<td data-label="Net adjustment" class="num adj-net" title="What the line changes the value of the stock by"></td>' : '')
@@ -680,7 +829,15 @@ echo memorized_loaded_note($memAdj);
   <?= Classes::field(fv('class_id', $memRec), 'col-md-6 col-lg-3') ?>
   <?= adjust_reason_field($reasons, fv('reason', $memRec), 'col-md-6 col-lg-3', $canEditReasons) ?>
   <div class="col-md-6 col-lg-3" data-toggle-by="#reasonSel" data-show-when="Other"><label class="form-label">Describe</label><input class="form-control form-control-sm" name="reason_other" value="<?= h(fv('reason_other', $memRec)) ?>"></div>
+  <?php if (!$edit && SalesReps::ready()): ?>
+  <?= select_field('shortage_rep_id', 'Shortage charged to (cashier or sales rep)', SalesReps::pickers(), fv('shortage_rep_id'), ['blank' => '— not charged to anyone —', 'class' => 'col-md-6 col-lg-3', 'no_add' => true, 'extra' => 'id="adjShortRep" data-combo' . QuickAdd::attr('rep')]) ?>
+  <?php endif; ?>
+  <div class="col-md-6 col-lg-3 d-flex align-items-end"><label class="adj-bal-toggle" for="adjShowBal"><input class="form-check-input" type="checkbox" id="adjShowBal"<?= g('balances') === '1' ? ' checked' : '' ?>>
+    <span><strong>Display Inventory Balances</strong><small>Every item the site holds or is below zero, one line each; remove the ones not adjusted</small></span></label></div>
   <?php if ($edit): ?><?= input_field('change_reason', 'Why it is being changed', fv('change_reason'), ['class' => 'col-md-12 col-lg-6', 'extra' => 'maxlength="255" placeholder="Recorded in the audit trail"']) ?><?php endif; ?>
+  <?php if (!$edit && SalesReps::ready()): ?>
+  <div class="col-12 adj-short-note" id="adjShortNote" hidden><i class="bi bi-person-exclamation"></i> <span>The stock short is charged to <strong id="adjShortWho"></strong> at average cost on a Shortage Charge (a receivable collected with Receive Payments), not to the adjustment account. Only decreases can be charged.</span></div>
+  <?php endif; ?>
 </div></div>
 
 <div class="card mb-3 adj-lines-card">
@@ -695,8 +852,8 @@ echo memorized_loaded_note($memAdj);
     <span class="small text-muted ms-xl-auto">Type the <strong>new quantity</strong> or the <strong>difference</strong>; the other follows.</span>
   </div>
   <div class="card-body">
-    <div class="table-responsive adj-lines-wrap"><table class="table table-sm align-middle mb-0 adj-lines" id="adjLines" data-items="<?= h(json_encode($itemData, JSON_UNESCAPED_UNICODE)) ?>">
-      <thead><tr><th class="adj-col-item">Item</th><th>Description</th><?= $lotOn ? '<th class="adj-col-lot">Production / expiry date</th>' : '' ?><th class="num">Qty on hand</th><th class="num adj-q">New quantity</th><th class="num adj-q">Qty difference</th><th>U/M</th>
+    <div class="table-responsive adj-lines-wrap"><table class="table table-sm align-middle mb-0 adj-lines" id="adjLines" data-items="<?= h(json_encode($itemData, JSON_UNESCAPED_UNICODE)) ?>"<?= $crateOn ? ' data-crates-url="' . h(url('api.crates', ['signed' => 1])) . '"' . ($edit ? ' data-crates-txn="' . (int)$edit['id'] . '"' : '') : '' ?>>
+      <thead><tr><th class="adj-col-item">Item</th><th>Description</th><?= $lotOn ? '<th class="adj-col-lot">Production / expiry date</th>' : '' ?><th class="num">Qty on hand</th><th class="num adj-q">New quantity</th><th class="num adj-q">Qty difference</th><th>U/M</th><?= $crateOn ? '<th class="adj-q">Crates</th>' : '' ?>
         <th class="num adj-v">Current value</th><th class="num adj-v">New value</th><?= $viewCosts ? '<th class="num" title="What the line changes the value of the stock by">Net adjustment</th>' : '' ?><?= $classOn ? '<th>Class</th>' : '' ?><th></th></tr></thead>
       <tbody>
       <?php foreach (array_values($posted) as $i => $r): ?><?= $lineCell((string)$i, (array)$r) ?><?php endforeach; ?>
@@ -714,6 +871,7 @@ echo memorized_loaded_note($memAdj);
   </div>
 </div>
 <?= Approval::fields() ?>
+<?php if ($crateOn): ?><p class="small text-muted mt-2 mb-0 adj-crate-note"><i class="bi bi-boxes"></i> Items kept in crates are adjusted <strong>crate by crate</strong>: press <strong>Crates</strong> on the line and type the weight each crate has now (and the loose stock's). Every crate keeps its own weight; the line's difference is their total. Without the crates, a line can only change the loose stock.</p><?php endif; ?>
 <p class="small text-muted mt-2">A decrease debits the adjustment account and credits Inventory at average cost; an increase does the reverse. Lines without an item, or without a change, are left out.<?php if ($viewCosts): ?>
   <span class="adj-v-note"><strong>New value</strong> is what the item is worth in total (all sites) after the adjustment; with a new quantity typed it is worked out at the average cost until you type a value of your own.</span>
   <strong>Net adjustment</strong> is what each line changes the value of the stock by.<?php endif; ?></p>
@@ -900,6 +1058,7 @@ echo memorized_loaded_note($memAdj);
     fillUnits(tr, true);
     fillLots(tr, true);
     refresh(tr);
+    paintCrates(tr);
   };
   var seq = 0;
   var markNew = function (rows) {
@@ -1033,8 +1192,133 @@ echo memorized_loaded_note($memAdj);
     if (window.bootstrap) { bootstrap.Modal.getOrCreateInstance(document.getElementById('adjFind')).hide(); }
   });
 
+  // v2: Display Inventory Balances: every item the site holds (or is below zero), one line each; items with nothing are
+  // left out. The lines it adds and nobody touched go again when it is unticked or the site changes.
+  var balBox = document.getElementById('adjShowBal');
+  var syncBalances = function () {
+    tbody.querySelectorAll('tr.adj-line[data-auto-bal]').forEach(function (tr) {
+      if (tr.classList.contains('is-changed')) { delete tr.dataset.autoBal; } else { tr.remove(); }
+    });
+    var added = [];
+    if (balBox.checked) {
+      var on = {}; tbody.querySelectorAll('.adj-item').forEach(function (x) { if (x.value) { on[x.value] = true; } });
+      Object.keys(items).filter(function (id) { return !on[id] && Math.abs(onHand(items[id])) > 1e-9; })
+        .sort(function (a, b) { return String(items[a].code).localeCompare(String(items[b].code)); })
+        .forEach(function (id) { var tr = addLine(id); tr.dataset.autoBal = '1'; added.push(tr); });
+      tbody.querySelectorAll('tr.adj-line').forEach(function (tr) { if (!tr.querySelector('.adj-item').value && tbody.querySelectorAll('tr.adj-line').length > 1) { tr.remove(); } });
+      if (!added.length && window.AppToast) { window.AppToast('No other item has stock (or is below zero) at this site.'); }
+    }
+    if (!tbody.querySelector('tr.adj-line')) { addLine(); }
+    markNew(added.slice(0, 1));
+    totals();
+  };
+  if (balBox) {
+    balBox.addEventListener('change', syncBalances);
+    document.getElementById('adjSite').addEventListener('change', function () { if (balBox.checked) { syncBalances(); } });
+  }
+  var shortRep = document.getElementById('adjShortRep');
+  var shortNote = function () {
+    var box = document.getElementById('adjShortNote');
+    if (!shortRep || !box) { return; }
+    var o = shortRep.options[shortRep.selectedIndex];
+    box.hidden = !shortRep.value;
+    document.getElementById('adjShortWho').textContent = o ? o.textContent : '';
+    form.classList.toggle('adj-is-shortage', !!shortRep.value);
+    var r = document.getElementById('reasonSel');
+    if (shortRep.value && r && !r.value && Array.prototype.some.call(r.options, function (x) { return x.value === 'Shortage'; })) { r.value = 'Shortage'; r.dispatchEvent(new Event('change', { bubbles: true })); }
+  };
+  if (shortRep) { shortRep.addEventListener('change', shortNote); shortNote(); }
+
+  // v3: an item kept in crates is adjusted crate by crate. The line's crates (and the loose stock's difference) are kept
+  // in its hidden "crates" box; while it has them its quantity boxes show their total and its U/M is the base unit.
+  function parseCrates(v) { try { var x = JSON.parse(v || '[]'); return Array.isArray(x) ? x : []; } catch (e) { return []; } }
+  function paintCrates(tr) {
+    var btn = tr.querySelector('[data-adj-crates]'), hid = tr.querySelector('.adj-crates');
+    if (!btn || !hid) { return; }
+    var it = items[tr.querySelector('.adj-item').value];
+    var can = !!(it && it.crate) && mode() !== 'value';
+    var here = it && it.cratesAt ? (parseInt(it.cratesAt[site()], 10) || 0) : 0;
+    btn.disabled = !can;
+    if (!(it && it.crate) && hid.value) { hid.value = ''; }
+    var list = parseCrates(hid.value);
+    var n = list.filter(function (c) { return c.id !== 'loose'; }).length;
+    var loose = list.some(function (c) { return c.id === 'loose'; });
+    btn.querySelector('[data-crate-label]').textContent = n ? (loose ? n + ' + loose' : n + (n === 1 ? ' crate' : ' crates')) : (loose ? 'Loose' : 'Crates');
+    btn.classList.toggle('has-crates', list.length > 0);
+    btn.classList.toggle('needs-crates', can && here > 0 && !list.length);
+    btn.title = !(it && it.crate) ? 'Not kept in crates' : (list.length ? (n ? n + (n === 1 ? ' crate' : ' crates') : '') + (n && loose ? ' and ' : '') + (loose ? 'the loose stock' : '') + ' adjusted: press to change'
+      : (here ? here + ' open crate' + (here === 1 ? '' : 's') + ' here: press to type the weight of each crate adjusted' : 'No open crate of it at this site: its loose stock can be adjusted here'));
+    var lock = list.length > 0 && mode() !== 'value';
+    ['.adj-newq', '.adj-diffq'].forEach(function (c) {
+      var i = tr.querySelector(c);
+      i.readOnly = lock;
+      i.classList.toggle('qty-from-crates', lock);
+      if (lock) { i.title = 'The total of the crates: press Crates to change it'; } else { i.removeAttribute('title'); }
+    });
+    var u = tr.querySelector('.adj-uom');
+    if (lock) { if (u.value !== '') { u.value = ''; } u.disabled = true; } else { u.disabled = u.options.length < 2; }
+  }
+  function clearCrates(tr) {
+    var hid = tr.querySelector('.adj-crates');
+    if (!hid || !hid.value) { return; }
+    hid.value = '';
+    tr.querySelector('.adj-newq').value = ''; tr.querySelector('.adj-diffq').value = '';
+    paintCrates(tr); refresh(tr);
+  }
+  function setCrates(tr, list) {
+    var hid = tr.querySelector('.adj-crates');
+    hid.value = list.length ? JSON.stringify(list) : '';
+    var u = tr.querySelector('.adj-uom');
+    if (u.value !== '') { u.value = ''; }
+    var d = list.reduce(function (a, c) { return a + (num(c.qty) || 0); }, 0);
+    tr.querySelector('.adj-diffq').value = list.length ? qfmt(Math.round(d * 10000) / 10000).replace(/,/g, '') : '';
+    if (!list.length) { tr.querySelector('.adj-newq').value = ''; }
+    tr.dataset.last = 'diff';
+    paintCrates(tr); refresh(tr, 'diff'); totals();
+  }
+  function loadCrates(tr) {
+    var it = items[tr.querySelector('.adj-item').value];
+    var url = table.dataset.cratesUrl + '&item_id=' + encodeURIComponent(tr.querySelector('.adj-item').value) + '&site_id=' + encodeURIComponent(site())
+      + (table.dataset.cratesTxn ? '&txn=' + table.dataset.cratesTxn : '');
+    return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.error) { throw new Error(d.error); }
+      return { it: it, d: d };
+    });
+  }
+  tbody.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-adj-crates]');
+    if (!b || b.disabled || !window.CrateWindow) { return; }
+    var tr = b.closest('tr.adj-line');
+    loadCrates(tr).then(function (x) {
+      var siteName = document.getElementById('adjSite').options[document.getElementById('adjSite').selectedIndex].textContent;
+      window.CrateWindow.open({ dir: 'adjust', title: x.it.code + ' ' + x.it.name, base: x.d.base || x.it.crate,
+        sub: 'The open crates at ' + siteName + ': type the weight each crate has now, or its difference.',
+        crates: x.d.crates || [], loose: x.d.loose || 0, value: tr.querySelector('.adj-crates').value,
+        onSave: function (list) { setCrates(tr, list); } });
+    }).catch(function (err) { alert(err && err.message ? err.message : 'The open crates could not be loaded. Check the connection and try again.'); });
+  });
+  tbody.addEventListener('change', function (e) {
+    if (e.target.classList.contains('adj-item')) { var tr = e.target.closest('tr.adj-line'); if (tr) { clearCrates(tr); paintCrates(tr); } }
+  });
+  document.getElementById('adjSite').addEventListener('change', function () { tbody.querySelectorAll('tr.adj-line').forEach(function (tr) { clearCrates(tr); paintCrates(tr); }); });
+  document.getElementById('adjMode').addEventListener('change', function () { tbody.querySelectorAll('tr.adj-line').forEach(paintCrates); });
+  // Set Qty to Zero: an item kept in crates goes to zero crate by crate (every crate and its loose stock to 0)
+  document.getElementById('adjZero').addEventListener('click', function () {
+    if (!table.dataset.cratesUrl || mode() === 'value') { return; }
+    tbody.querySelectorAll('tr.adj-line').forEach(function (tr) {
+      var it = items[tr.querySelector('.adj-item').value];
+      if (!it || !it.crate || !(parseInt((it.cratesAt || {})[site()], 10) > 0)) { return; }
+      loadCrates(tr).then(function (x) {
+        var list = (x.d.crates || []).filter(function (c) { return num(c.qty) > 0.00005; }).map(function (c) { return { id: c.id, qty: -num(c.qty), no: c.no }; });
+        if (Math.abs(num(x.d.loose)) > 0.00005) { list.push({ id: 'loose', qty: -num(x.d.loose) }); }
+        setCrates(tr, list);
+      }).catch(function () { /* the line keeps the new quantity 0 typed by the button */ });
+    });
+  });
+
   tbody.querySelectorAll('tr.adj-line').forEach(wire);
   showMode();
+  if (balBox && balBox.checked) { syncBalances(); }
 })();
 </script>
 <?php else: ?>
@@ -1045,6 +1329,9 @@ echo memorized_loaded_note($memAdj);
     $shown = $catIds ? array_values(array_filter($items, fn($it) => in_array((int)$it['category_id'], $catIds, true))) : $items;
     $catNames = array_values(array_intersect_key($categories, array_flip($catIds)));   // in the order of the list
     $showNet = $viewCosts;
+    // v3: the items kept in crates that have open crates at the site are adjusted crate by crate
+    $batchCrates = Crates::ready() && $mode !== 'value' ? Crates::crateItems(array_keys($byId)) : [];
+    $batchCounts = $batchCrates ? Crates::openCounts() : [];
 ?>
 <form method="get" class="row g-2 mb-2 filters">
   <input type="hidden" name="p" value="<?= h($pageKey) ?>"><input type="hidden" name="entry" value="batch">
@@ -1053,7 +1340,7 @@ echo memorized_loaded_note($memAdj);
   <?= select_field('site_id', 'Site', $sites, $siteId, ['class' => 'col-md-3', 'extra' => 'data-autosubmit']) ?>
   <?= multi_check_field('category_ids', 'Categories', $categories, $catIds, ['all' => 'All categories', 'noun' => 'categories', 'submit' => true, 'class' => 'col-md-4', 'id' => 'adjBatchCats']) ?>
 </form>
-<form method="post" id="adjBatchForm" class="adj-batch-form" data-mode="<?= h($mode) ?>" action="<?= h(url($pageKey, ['entry' => 'batch', 'category_ids' => $catIds ?: null])) ?>"><?= csrf_field() ?><?= negative_stock_fields() ?>
+<form method="post" id="adjBatchForm" class="adj-batch-form" data-mode="<?= h($mode) ?>" data-site="<?= (int)$siteId ?>" data-site-name="<?= h($sites[$siteId] ?? '') ?>"<?= $batchCrates ? ' data-crates-url="' . h(url('api.crates', ['signed' => 1])) . '"' : '' ?> action="<?= h(url($pageKey, ['entry' => 'batch', 'category_ids' => $catIds ?: null])) ?>"><?= csrf_field() ?><?= negative_stock_fields() ?>
 <input type="hidden" name="entry" value="batch">
 <input type="hidden" name="mode" value="<?= h($mode) ?>"><input type="hidden" name="site_id" value="<?= (int)$siteId ?>">
 <div class="card mb-3"><div class="card-body row g-2">
@@ -1114,7 +1401,10 @@ echo memorized_loaded_note($memAdj);
       <?php if ($lotCol): ?><td><?php if (isset($lotTracked[$iid])): ?><div class="adj-lot-dates" title="The dates of stock added"><input type="date" class="form-control form-control-sm" name="rows[<?= $iid ?>][production_date]" value="<?= h($post['production_date'] ?? '') ?>" aria-label="Production date" title="Production date"><input type="date" class="form-control form-control-sm" name="rows[<?= $iid ?>][expiry_date]" value="<?= h($post['expiry_date'] ?? '') ?>" aria-label="Expiry date" title="Expiry date"></div><?php endif; ?></td><?php endif; ?>
       <?php if ($mode !== 'value'): ?>
         <td class="num"><?= qty($it['site_qty']) ?></td>
-        <td><input class="form-control form-control-sm text-end ms-auto adj-new" style="width:100px" name="rows[<?= (int)$it['id'] ?>][new_qty]" value="<?= h($post['new_qty'] ?? '') ?>" inputmode="decimal" aria-label="New quantity of <?= h($it['code']) ?>" <?= $focus === (int)$it['id'] ? 'autofocus' : '' ?>></td>
+        <?php $cratesHere = isset($batchCrates[$iid]) && ($batchCounts[$iid][$siteId] ?? 0) > 0; ?>
+        <td><?php if ($cratesHere): ?><div class="adj-batch-crates"><input type="hidden" class="adj-crates" name="rows[<?= $iid ?>][crates]" value="<?= h($post['crates'] ?? '') ?>">
+          <button type="button" class="btn btn-sm crate-btn needs-crates" data-batch-crates data-item="<?= $iid ?>" data-title="<?= h($it['code'] . ' ' . $it['name']) ?>" title="<?= (int)$batchCounts[$iid][$siteId] ?> open crate(s) here: press to type the weight of each crate adjusted"><i class="bi bi-boxes"></i><span data-crate-label>Crates</span></button><?php endif; ?>
+          <input class="form-control form-control-sm text-end ms-auto adj-new" style="width:100px" name="rows[<?= (int)$it['id'] ?>][new_qty]" value="<?= h($post['new_qty'] ?? '') ?>" inputmode="decimal" aria-label="New quantity of <?= h($it['code']) ?>" <?= $focus === (int)$it['id'] ? 'autofocus' : '' ?>><?php if ($cratesHere): ?></div><?php endif; ?></td>
         <td class="num adj-diff"></td>
       <?php endif; ?>
       <?php if ($mode !== 'qty'): ?>
@@ -1136,6 +1426,7 @@ echo memorized_loaded_note($memAdj);
   </div>
 </div>
 <?= Approval::fields() ?>
+<?php if ($batchCrates): ?><p class="small text-muted mt-2 mb-0 adj-crate-note"><i class="bi bi-boxes"></i> Items with open crates here are adjusted <strong>crate by crate</strong>: press <strong>Crates</strong> on the row and type the weight each crate has now (and the loose stock's). Without the crates, a row can only change the loose stock.</p><?php endif; ?>
 <p class="small text-muted mt-2">A decrease debits the adjustment (shrinkage) account and credits Inventory at average cost; an increase does the reverse. Leave a row blank to keep it unchanged.<?php if ($mode !== 'qty'): ?>
   <strong>New value</strong> is what the item is worth in total (all sites) after the adjustment<?= $mode === 'both' ? '; typing the new quantity works it out at the average cost, until you type a value of your own' : '' ?>.<?php endif; ?>
   <?php if ($showNet): ?><strong>Net adjustment</strong> is what the row changes the value of the stock by.<?php endif; ?></p>
@@ -1180,6 +1471,40 @@ echo memorized_loaded_note($memAdj);
     if (e.target.classList.contains('adj-val')) delete e.target.dataset.auto;
     if (e.target.closest('#adjBatch')) totals();
   });
+  // v3: a row of an item kept in crates, adjusted crate by crate: its new quantity is what it has plus their total
+  const parseC = (v) => { try { const x = JSON.parse(v || '[]'); return Array.isArray(x) ? x : []; } catch (e) { return []; } };
+  const paintRow = (tr) => {
+    const hid = tr.querySelector('.adj-crates'), btn = tr.querySelector('[data-batch-crates]'), q = tr.querySelector('.adj-new');
+    if (!hid || !btn) return;
+    const list = parseC(hid.value);
+    const n = list.filter((c) => c.id !== 'loose').length, loose = list.some((c) => c.id === 'loose');
+    btn.querySelector('[data-crate-label]').textContent = n ? (loose ? n + ' + loose' : n + (n === 1 ? ' crate' : ' crates')) : (loose ? 'Loose' : 'Crates');
+    btn.classList.toggle('has-crates', list.length > 0);
+    btn.classList.toggle('needs-crates', !list.length);
+    q.readOnly = list.length > 0;
+    q.classList.toggle('qty-from-crates', list.length > 0);
+    if (list.length) {
+      const d = list.reduce((a, c) => a + num(c.qty), 0);
+      q.value = String(Math.round((num(tr.dataset.cur) + d) * 10000) / 10000);
+    }
+  };
+  form.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-batch-crates]');
+    if (!b || !window.CrateWindow) return;
+    const tr = b.closest('tr');
+    fetch(form.dataset.cratesUrl + '&item_id=' + encodeURIComponent(b.dataset.item) + '&site_id=' + encodeURIComponent(form.dataset.site), { credentials: 'same-origin' })
+      .then((r) => r.json()).then((d) => {
+        if (d.error) { alert(d.error); return; }
+        window.CrateWindow.open({ dir: 'adjust', title: b.dataset.title, base: d.base || 'kg', crates: d.crates || [], loose: d.loose || 0, value: tr.querySelector('.adj-crates').value,
+          sub: 'The open crates at ' + form.dataset.siteName + ': type the weight each crate has now, or its difference.',
+          onSave: (list) => {
+            tr.querySelector('.adj-crates').value = list.length ? JSON.stringify(list) : '';
+            if (!list.length) tr.querySelector('.adj-new').value = '';
+            paintRow(tr); totals();
+          } });
+      }).catch(() => alert('The open crates could not be loaded. Check the connection and try again.'));
+  });
+  form.querySelectorAll('#adjBatch tbody tr').forEach(paintRow);
   // a value worked out from the quantity is only shown: the quantity alone is sent, which gives that value
   form.addEventListener('submit', () => {
     const auto = Array.prototype.filter.call(form.querySelectorAll('.adj-val'), (i) => i.dataset.auto === '1');

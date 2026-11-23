@@ -54,13 +54,13 @@ if (g('a') === 'view') {
       <thead><tr><th>Date</th><th>What happened</th><th>Document</th><th>Customer / site</th><th class="num"><?= h($base) ?></th><th class="num">Left after</th><th>By</th></tr></thead>
       <tbody>
       <?php $left = 0.0; foreach ($moves as $m):
-          if ($m['kind'] === 'receive') { $left += (float)$m['qty']; } elseif (in_array($m['kind'], ['sale', 'auto'], true)) { $left -= (float)$m['qty']; } ?>
+          if ($m['kind'] === 'receive') { $left += (float)$m['qty']; } elseif (in_array($m['kind'], Crates::TAKE_KINDS, true)) { $left -= (float)$m['qty']; } ?>
         <tr class="move-<?= h($m['kind']) ?>">
           <td><?= h(fdate($m['move_date'])) ?></td>
-          <td><?= h(Crates::kindText($m['kind'])) ?><?= $m['kind'] === 'sale' ? ((int)$m['whole'] ? ', the whole crate' : ', part of it') : '' ?><?= $m['note'] ? '<div class="small text-muted">' . h($m['note']) . '</div>' : '' ?></td>
+          <td><?= h(Crates::kindText($m['kind'])) ?><?= in_array($m['kind'], ['sale', 'shrink', 'shortage'], true) || ($m['kind'] === 'adjust' && (float)$m['qty'] > 0) ? ((int)$m['whole'] ? ', the whole crate' : ($m['kind'] === 'adjust' ? ', down' : ', part of it')) : ($m['kind'] === 'adjust' ? ', up' : '') ?><?= $m['note'] ? '<div class="small text-muted">' . h($m['note']) . '</div>' : '' ?></td>
           <td><?= $m['txn_id'] ? Txn::link((int)$m['txn_id']) : '' ?></td>
           <td><?= $m['kind'] === 'transfer' ? h($m['site_name'] . ' to ' . $m['site2_name']) : h((string)($m['customer_name'] ?: $m['site_name'])) ?></td>
-          <td class="num"><?= $m['kind'] === 'receive' ? '+' . Crates::fig($m['qty'], $base) : (in_array($m['kind'], ['sale', 'auto'], true) ? '-' . Crates::fig($m['qty'], $base) : '') ?></td>
+          <td class="num"><?= Crates::signedFig($m, $base) ?></td>
           <td class="num"><?= Crates::fig(max(0, $left), $base) ?></td>
           <td class="small"><?= h((string)$m['user_name']) ?></td>
         </tr>
@@ -87,7 +87,7 @@ if ($itemId) {
     $where[] = 'c.item_id = :i';
     $params['i'] = $itemId;
 }
-if (in_array($status, ['open', 'sold', 'converted'], true)) {
+if (in_array($status, ['open', 'sold', 'converted', 'used'], true)) {
     $where[] = 'c.status = :st';
     $params['st'] = $status;
 }
@@ -141,7 +141,7 @@ layout_start('Crate Center', ['actions' => page_link('inv.crate_convert', [], 'C
   <div class="row g-2 align-items-end">
     <?= select_field('site_id', 'Site', Lookup::sites(), $siteId, ['blank' => 'All sites', 'class' => 'col-6 col-md-2', 'no_add' => true]) ?>
     <?= select_field('item_id', 'Item', $itemOpts, $itemId, ['blank' => 'All items', 'class' => 'col-md-4', 'no_add' => true, 'extra' => 'data-combo']) ?>
-    <?= select_field('status', 'Crates', ['open' => 'Open (on hand)', 'sold' => 'Sold out', 'converted' => 'Converted to kilos', 'all' => 'All'], $status, ['class' => 'col-6 col-md-2', 'no_add' => true]) ?>
+    <?= select_field('status', 'Crates', ['open' => 'Open (on hand)', 'sold' => 'Sold out', 'used' => 'Used up (adjusted, shrinkage, shortage)', 'converted' => 'Converted to kilos', 'all' => 'All'], $status, ['class' => 'col-6 col-md-2', 'no_add' => true]) ?>
     <?= select_field('within', 'Expiring', ['3' => 'Within 3 days', '7' => 'Within 7 days', '15' => 'Within 15 days', '30' => 'Within 30 days', '0' => 'Expired'], $within, ['blank' => 'Any date', 'class' => 'col-6 col-md-2', 'no_add' => true]) ?>
     <?= input_field('q', 'Crate no.', $q, ['class' => 'col-6 col-md-1']) ?>
     <div class="col-6 col-md-1"><button class="btn btn-sm btn-outline-primary w-100">Show</button></div>

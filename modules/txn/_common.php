@@ -400,7 +400,7 @@ function txn_common_actions(string $pageKey, array $types): bool
         }
         return false;
     }
-    if (!in_array($a, ['view', 'print', 'pdf', 'void', 'delete', 'email', 'close', 'reopen', 'sign', 'sign_request', 'sign_revoke', 'sign_reset', 'sign_pdf'], true)) {
+    if (!in_array($a, ['view', 'print', 'pdf', 'receipt', 'void', 'delete', 'email', 'close', 'reopen', 'sign', 'sign_request', 'sign_revoke', 'sign_reset', 'sign_pdf'], true)) {
         return false;
     }
     $id = (int)g('id');
@@ -426,6 +426,18 @@ function txn_common_actions(string $pageKey, array $types): bool
             }
             Audit::log('print', Txn::module($t['txn_type']), 'transaction', $id, Txn::ref($t), ['page_key' => $pageKey]);
             render_txn_print($t);
+            return true;
+        case 'receipt':
+            // v3 distribution: the Inventory Transfer as a POS printer slip (browser, Bluetooth printer), or as a PDF of it
+            Access::require($pageKey, 'print');
+            if ($t['txn_type'] !== 'inventory_transfer') {
+                redirect(Txn::url($t));
+            }
+            Audit::log('print', Txn::module($t['txn_type']), 'transaction', $id, Txn::ref($t), ['page_key' => $pageKey, 'reason' => g('pdf') === '1' ? 'POS receipt saved as PDF' : 'POS receipt']);
+            if (g('pdf') === '1') {
+                TransferReceipt::pdf(TransferReceipt::model($t))->download('Inventory_Transfer_' . ($t['txn_no'] ?: $id) . '.pdf');
+            }
+            TransferReceipt::render($t, $pageKey);
             return true;
         case 'pdf':
             // v44: Save as PDF of the Check Voucher, the Cash Voucher and the Journal Voucher (the same PDF as the signed copies)
@@ -519,10 +531,13 @@ function crate_notes(int $txnId): array
         foreach ($rows as $r) {
             $base = $base ?: Crates::baseUnit((int)DB::value('SELECT item_id FROM crates WHERE id = :c', ['c' => $r['crate_id']]));
             $exp = $r['expiry_date'] ? ', exp. ' . fdate($r['expiry_date']) : '';
-            if ($r['kind'] === 'sale' && !(int)$r['whole']) {
+            if (in_array($r['kind'], ['sale', 'shrink', 'shortage'], true) && !(int)$r['whole']) {
                 $parts[] = $r['crate_no'] . ' (' . qty($r['qty']) . ' of ' . qty($r['qty_in']) . ' ' . $base . $exp . ')';
             } elseif ($r['kind'] === 'transfer') {
-                $parts[] = $r['crate_no'] . ' (' . qty($r['qty_left']) . ' ' . $base . ')';
+                $parts[] = $r['crate_no'] . ' (' . qty(max(0.0, (float)$r['w_before'])) . ' ' . $base . ')';
+            } elseif ($r['kind'] === 'adjust') {
+                // v3: a crate adjusted down (kilos taken out) or up (put back)
+                $parts[] = $r['crate_no'] . ' (' . ((float)$r['qty'] > 0 ? '-' : '+') . qty(abs((float)$r['qty'])) . ' ' . $base . $exp . ')';
             } else {
                 $parts[] = $r['crate_no'] . ' (' . qty($r['qty']) . ' ' . $base . $exp . ')';
             }
@@ -686,7 +701,7 @@ function render_txn_view(array $t, string $pageKey): void
     // voiding and entering them again, so they get no Edit button (item receipts, inventory adjustments, transfers and
     // builds are edited on their own pages)
     $editable = !$voided && !$sigLocked && Access::can($pageKey, 'edit') && !in_array($type, ['pos_sale', 'pos_return', 'depreciation', 'asset_disposal', 'bank_charge', 'bank_interest', 'pos_over_short', 'refund',
-        'finance_charge'], true);
+        'finance_charge', 'shortage_charge'], true) && !TransferClosing::ownerOf($id);
     if ($editable) {
         $actions[] = btn_link(url($pageKey, ['a' => 'edit', 'id' => $id]), 'Edit', 'btn-primary', 'pencil');
         if ((int)$t['is_pending'] === 1 && in_array($type, ['invoice', 'sales_receipt'], true)) {
@@ -695,6 +710,10 @@ function render_txn_view(array $t, string $pageKey): void
     }
     if (Access::can($pageKey, 'print')) {
         $actions[] = btn_link(Txn::url($t, 'print') . (g('lines') === 'details' ? '&lines=details' : ''), 'Print', 'btn-outline-secondary', 'printer');
+        if ($type === 'inventory_transfer') {
+            // v3 distribution: the transfer on the POS printer, crate by crate (and as a PDF from there)
+            $actions[] = btn_link(Txn::url($t, 'receipt'), 'Print POS Receipt', 'btn-outline-primary', 'receipt');
+        }
         if (voucher_pdf_ok($t)) {
             $actions[] = btn_link(Txn::url($t, 'pdf'), 'Save as PDF', 'btn-outline-secondary', 'file-earmark-pdf');
         }
@@ -725,7 +744,7 @@ function render_txn_view(array $t, string $pageKey): void
         if ($type === 'item_receipt' && Access::can('vend.bill_received', 'create')) {
             $actions[] = btn_link(url('vend.bill_received', ['id' => $id]), 'Enter Bill for Received Items', 'btn-outline-success', 'receipt');
         }
-        if (in_array($type, ['invoice', 'statement_charge', 'finance_charge'], true) && $open > 0 && (int)$t['is_pending'] === 0 && Access::can('cust.payments', 'create')) {
+        if (in_array($type, ['invoice', 'statement_charge', 'finance_charge', 'shortage_charge'], true) && $open > 0 && (int)$t['is_pending'] === 0 && Access::can('cust.payments', 'create')) {
             $actions[] = btn_link(url('cust.payments', ['customer_id' => $t['customer_id']]), 'Receive Payment', 'btn-outline-success', 'cash');
         }
         if ($type === 'bill' && $open > 0 && Access::can('vend.pay_bills', 'create')) {
@@ -1374,7 +1393,7 @@ function txn_print_body(array $t): void
           <tr><td>VAT</td><td class="num"><?= money($t['tax_total']) ?></td></tr>
           <?php endif; ?>
           <tr class="fw-bold"><td>Total</td><td class="num"><?= money($t['total']) ?></td></tr>
-          <?php if (in_array($type, ['invoice', 'statement_charge', 'finance_charge', 'bill'], true)): ?>
+          <?php if (in_array($type, ['invoice', 'statement_charge', 'finance_charge', 'shortage_charge', 'bill'], true)): ?>
           <tr><td>Balance due</td><td class="num"><?= money(Balances::open($t)) ?></td></tr>
           <?php endif; ?>
         </table>
@@ -1450,7 +1469,7 @@ function render_txn_list(string $pageKey, array $types, string $title, array $op
           ORDER BY t.txn_date DESC, t.id DESC LIMIT 500',
         $params + $sp
     );
-    $showOpen = (bool)array_intersect($types, ['invoice', 'bill', 'statement_charge', 'finance_charge', 'credit_memo', 'payment', 'vendor_credit']);
+    $showOpen = (bool)array_intersect($types, ['invoice', 'bill', 'statement_charge', 'finance_charge', 'shortage_charge', 'credit_memo', 'payment', 'vendor_credit']);
     // transfers: where the items came from and went to, instead of a name and a money total
     $siteCols = !empty($opt['site_cols']);
     $siteNames = $siteCols ? DB::pairs('SELECT id, name FROM sites') : [];

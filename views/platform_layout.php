@@ -30,9 +30,8 @@ function platform_start(string $title, array $opt = []): void
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" type="image/svg+xml" href="<?= h(asset('img/favicon.svg')) ?>">
+<?= Pwa::head() ?>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0f2a3d">
 <title><?= h($title) ?> - Platform - <?= h($app) ?></title>
 <link rel="stylesheet" href="<?= h(vendor_asset('bootstrap.css')) ?>">
 <link rel="stylesheet" href="<?= h(vendor_asset('icons.css')) ?>">
@@ -65,6 +64,7 @@ function platform_start(string $title, array $opt = []): void
     <div class="topbar-where d-none d-md-flex"><span class="topbar-company">Platform</span><span class="topbar-module"><?= h($title) ?></span></div>
     <?php if ($sa): ?>
     <div class="topbar-tools">
+      <?= Pwa::installButton() ?>
       <div class="dropdown">
         <button class="user-btn dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><span class="user-ini" aria-hidden="true"><?= h(user_initials((string)$sa['full_name'])) ?></span><span class="user-name"><?= h($sa['full_name']) ?></span></button>
         <ul class="dropdown-menu dropdown-menu-end">

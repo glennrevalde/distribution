@@ -3,6 +3,7 @@
  * Lines of an item kept in crates carry their crates in a hidden field (JSON):
  *   receiving  [{id?, no, pcs, qty, prod, exp}]  one row per crate typed as it comes off the truck
  *   selling    [{id, qty, no}]                    crates chosen from the open crates of the site
+ *   adjusting  [{id, qty, no}, {id: 'loose', qty}] v3: each crate's difference (+ put in, - taken out) and the loose stock's
  * The line's quantity is the total kilos (or packs) of its crates; the price stays per kilo.
  * window.CrateWindow.open() is used by the POS Register too.
  */
@@ -42,7 +43,7 @@
     modal.addEventListener('click', onClick);
     modal.addEventListener('keydown', onKey);
     modal.addEventListener('shown.bs.modal', () => {
-      const f = modal.querySelector(state && state.dir === 'in' ? 'input[data-c="qty"]' : 'input[data-cw-find]');
+      const f = modal.querySelector(state && state.dir === 'in' ? 'input[data-c="qty"]' : (state && state.dir === 'adjust' ? 'input[data-cw-new]' : 'input[data-cw-find]'));
       if (f) f.focus();
     });
   }
@@ -60,7 +61,9 @@
     modal.querySelector('[data-cw-title]').textContent = opt.title || 'Crates';
     modal.querySelector('[data-cw-sub]').textContent = opt.sub || '';
     modal.querySelector('[data-cw-unit]').textContent = opt.base || 'kg';
-    if (opt.dir === 'in') renderIn(parse(opt.value)); else renderOut(parse(opt.value));
+    modal.classList.toggle('is-adjust', opt.dir === 'adjust');
+    modal.querySelector('[data-cw-save]').innerHTML = '<i class="bi bi-check-lg"></i> ' + (opt.dir === 'adjust' ? 'Save adjustment' : 'Save crates');
+    if (opt.dir === 'in') renderIn(parse(opt.value)); else if (opt.dir === 'adjust') renderAdjust(parse(opt.value)); else renderOut(parse(opt.value));
     // the quantity keyed in before the item (POS): the oldest crates are ticked for it
     if (opt.dir === 'out' && num(opt.need) > 0 && !parse(opt.value).length) {
       const n = modal.querySelector('[data-cw-need]');
@@ -88,12 +91,14 @@
       + '<input id="cwAddN" class="form-control form-control-sm" type="number" min="1" max="200" value="' + (list.length ? 1 : (state.defaultCount || 5)) + '">'
       + '<button type="button" class="btn btn-sm btn-outline-primary" data-cw-add><i class="bi bi-plus-lg"></i> Add crates</button></div>'
       + '<button type="button" class="btn btn-sm btn-outline-secondary" data-cw-rep title="Copy the heads and the dates of the first crate to the crates below it"><i class="bi bi-files"></i> Replicate</button>'
-      + '<span class="crate-hint">Type each crate\'s weight as it comes off the scale; Enter moves to the next crate.</span></div>'
+      + '<span class="crate-hint">Type each crate\'s weight as it comes off the scale; Enter moves to the next crate. Heads and dates typed on a crate are copied to the crates below it (not the weight); change any of them as needed.</span></div>'
       + '<div class="table-responsive"><table class="table table-sm crate-table"><thead><tr><th>Seq</th><th>Crate no.</th><th class="num">Heads</th><th class="num">Weight (' + esc(state.base || 'kg') + ')</th>'
       + '<th>Production date</th><th>Expiry date</th><th></th></tr></thead><tbody data-cw-rows></tbody>'
       + '<tfoot><tr><th></th><th>Totals</th><th class="num" data-cw-pcs>0</th><th class="num" data-cw-kg>0.00</th><th colspan="3"></th></tr></tfoot></table></div>';
     const tb = body.querySelector('[data-cw-rows]');
     tb.innerHTML = list.map(inRow).join('');
+    // crates already saved keep their own heads and dates: typing above them does not change them
+    tb.querySelectorAll('input[data-c="pcs"], input[data-c="prod"], input[data-c="exp"]').forEach((i) => { if (i.value !== '') i.dataset.own = '1'; });
     if (!list.length) addIn(state.defaultCount || 5);
   }
 
@@ -107,8 +112,9 @@
 
   function addIn(n) {
     const tb = modal.querySelector('[data-cw-rows]');
-    const first = tb.querySelector('tr');
-    const tpl = first ? { pcs: first.querySelector('[data-c="pcs"]').value, prod: first.querySelector('[data-c="prod"]').value, exp: first.querySelector('[data-c="exp"]').value } : { prod: state.today || '' };
+    // a new crate starts with the heads and dates of the crate above it (never its weight)
+    const last = tb.querySelector('tr:last-child');
+    const tpl = last ? { pcs: last.querySelector('[data-c="pcs"]').value, prod: last.querySelector('[data-c="prod"]').value, exp: last.querySelector('[data-c="exp"]').value } : { prod: state.today || '' };
     for (let k = 0; k < n; k++) {
       const i = tb.querySelectorAll('tr').length;
       tb.insertAdjacentHTML('beforeend', inRow({ no: nextNo(), pcs: tpl.pcs || '', prod: tpl.prod || '', exp: tpl.exp || '' }, i));
@@ -131,7 +137,7 @@
     const src = rows[0];
     rows.forEach((tr, i) => {
       if (i === 0) return;
-      ['pcs', 'prod', 'exp'].forEach((k) => { g(tr, k).value = g(src, k).value; });
+      ['pcs', 'prod', 'exp'].forEach((k) => { g(tr, k).value = g(src, k).value; delete g(tr, k).dataset.own; });
       if (g(tr, 'qty').value === '') g(tr, 'qty').value = g(src, 'qty').value;
       tr.classList.remove('row-new'); void tr.offsetWidth; tr.classList.add('row-new');
     });
@@ -208,8 +214,114 @@
     totals();
   }
 
+  // ------------------------------------------------------------------ adjusting: each crate's own new weight (v3)
+  const sign = (v) => (v > 0.00005 ? '+' : '') + fq(v);
+  function adjRow(c, d, isLoose) {
+    const left = num(c.qty);
+    const nw = d === undefined || d === null || Math.abs(d) < 0.00005 ? '' : q2(left + d);
+    const expCls = c.days === null || c.days === undefined ? '' : (c.days < 0 ? ' is-expired' : (c.days <= 3 ? ' is-near' : ''));
+    return '<tr data-id="' + esc(c.id) + '" data-left="' + left + '" data-max="' + (isLoose ? '' : num(c.qin)) + '" data-no="' + esc(isLoose ? '' : c.no) + '" class="' + (isLoose ? 'crate-loose' : '') + (nw !== '' ? ' is-picked' : '') + '">'
+      + (isLoose
+        ? '<td class="crate-no crate-loose-name">Loose<small>not in a crate</small></td><td></td><td></td><td></td>'
+        : '<td class="crate-no">' + esc(c.no) + '</td><td class="num">' + (c.pcs ? fq(c.pcs).replace(/\.00$/, '') : '') + '</td>'
+          + '<td>' + esc(fdate(c.prod)) + '</td><td class="crate-exp' + expCls + '">' + esc(fdate(c.exp)) + (c.days !== null && c.days !== undefined ? '<small>' + (c.days < 0 ? 'expired' : c.days + 'd left') + '</small>' : '') + '</td>')
+      + '<td class="num crate-now">' + fq(left) + (isLoose ? '' : '<small>of ' + fq(c.qin) + '</small>') + '</td>'
+      + '<td class="num"><input class="form-control form-control-sm text-end" inputmode="decimal" data-cw-new value="' + esc(nw) + '" placeholder="' + esc(fq(left)) + '" aria-label="New weight of ' + (isLoose ? 'the loose stock' : 'crate ' + esc(c.no)) + '"></td>'
+      + '<td class="num"><input class="form-control form-control-sm text-end" inputmode="decimal" data-cw-diff value="' + esc(nw === '' ? '' : sign(d)) + '" aria-label="Adjustment of ' + (isLoose ? 'the loose stock' : 'crate ' + esc(c.no)) + '"></td></tr>';
+  }
+
+  function renderAdjust(saved) {
+    const body = modal.querySelector('[data-cw-body]');
+    const set = {};
+    saved.forEach((c) => { set[String(c.id)] = num(c.qty); });
+    const crates = state.crates || [];
+    const base = esc(state.base || 'kg');
+    let html = '<div class="crate-tools"><input class="form-control form-control-sm crate-find" type="search" placeholder="Find a crate number" data-cw-find aria-label="Find a crate number">'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" data-cw-zero title="Every crate shown, and the loose stock, down to 0"><i class="bi bi-0-circle"></i> All to zero</button>'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" data-cw-clear title="Clear what was typed"><i class="bi bi-eraser"></i> Clear</button>'
+      + '<span class="crate-hint">Type the weight each crate has now, or its difference (-0.35). Crates left blank stay as they are. A crate can go down to 0, or back up to what it came in with.</span></div>';
+    html += '<div class="table-responsive"><table class="table table-sm crate-table crate-adjust"><thead><tr><th>Crate no.</th><th class="num">Heads</th><th>Production</th><th>Expiry</th>'
+      + '<th class="num">Now (' + base + ')</th><th class="num">New weight</th><th class="num">Adjust +/-</th></tr></thead><tbody data-cw-rows>';
+    crates.forEach((c) => { html += adjRow(c, set[String(c.id)], false); });
+    html += adjRow({ id: 'loose', qty: state.loose || 0 }, set.loose, true);
+    html += '</tbody><tfoot><tr><th colspan="4">Totals</th><th class="num" data-cw-left></th><th class="num" data-cw-newt></th><th class="num" data-cw-kg>0.00</th></tr></tfoot></table></div>';
+    if (!crates.length) html += '<div class="crate-empty mt-2">No open crate of this item at this site: only its loose stock can be adjusted here.</div>';
+    body.innerHTML = html;
+    checkAdj();
+  }
+
+  /** a crate below 0, or above what it came in with, is marked (and Save refuses it) */
+  function checkAdj() {
+    let bad = 0;
+    modal.querySelectorAll('[data-cw-rows] tr').forEach((tr) => {
+      const nIn = tr.querySelector('[data-cw-new]');
+      const v = nIn.value.trim() === '' ? null : num(nIn.value);
+      const max = tr.dataset.max === '' ? null : num(tr.dataset.max);
+      const wrong = v !== null && (v < -0.00005 || (max !== null && v > max + 0.00005));
+      nIn.classList.toggle('is-invalid', wrong);
+      nIn.title = wrong ? (v < 0 ? 'A weight cannot be below 0' : 'It came in with ' + fq(max) + ': it cannot be put above that') : '';
+      tr.classList.toggle('is-picked', v !== null && Math.abs(v - num(tr.dataset.left)) > 0.00005);
+      if (wrong) bad++;
+    });
+    return bad;
+  }
+
+  function readAdjust() {
+    const out = [];
+    modal.querySelectorAll('[data-cw-rows] tr').forEach((tr) => {
+      const nIn = tr.querySelector('[data-cw-new]');
+      if (nIn.value.trim() === '') return;
+      const d = q2(num(nIn.value) - num(tr.dataset.left));
+      if (Math.abs(d) < 0.00005) return;
+      out.push(tr.dataset.id === 'loose' ? { id: 'loose', qty: d } : { id: num(tr.dataset.id), qty: d, no: tr.dataset.no });
+    });
+    return out;
+  }
+
+  function adjustInput(el) {
+    const tr = el.closest('tr');
+    const left = num(tr.dataset.left);
+    const nIn = tr.querySelector('[data-cw-new]'), dIn = tr.querySelector('[data-cw-diff]');
+    if (el === nIn) {
+      dIn.value = nIn.value.trim() === '' ? '' : sign(q2(num(nIn.value) - left));
+    } else if (el === dIn) {
+      nIn.value = dIn.value.trim() === '' ? '' : String(q2(left + num(dIn.value)));
+    }
+    checkAdj();
+  }
+
+  function adjustAll(zero) {
+    modal.querySelectorAll('[data-cw-rows] tr').forEach((tr) => {
+      if (tr.hidden) return;
+      const nIn = tr.querySelector('[data-cw-new]'), dIn = tr.querySelector('[data-cw-diff]');
+      if (zero) {
+        if (Math.abs(num(tr.dataset.left)) < 0.00005) return;
+        nIn.value = '0'; dIn.value = sign(q2(-num(tr.dataset.left)));
+      } else { nIn.value = ''; dIn.value = ''; }
+    });
+    checkAdj();
+    totals();
+  }
+
   // ------------------------------------------------------------------ events
   function totals() {
+    if (state.dir === 'adjust') {
+      let d = 0, n = 0, now = 0, after = 0;
+      const list = readAdjust();
+      list.forEach((c) => { d += c.qty; if (c.id !== 'loose') n++; });
+      modal.querySelectorAll('[data-cw-rows] tr').forEach((tr) => { now += num(tr.dataset.left); });
+      after = now + d;
+      const l = modal.querySelector('[data-cw-left]'); if (l) l.textContent = fq(now);
+      const nt = modal.querySelector('[data-cw-newt]'); if (nt) nt.textContent = fq(after);
+      const k = modal.querySelector('[data-cw-kg]'); if (k) { k.textContent = sign(q2(d)); k.classList.toggle('neg', d < -0.00005); }
+      const t = modal.querySelector('[data-cw-total]');
+      const old = t.textContent;
+      t.textContent = sign(q2(d));
+      if (old !== t.textContent) { t.classList.remove('tick'); void t.offsetWidth; t.classList.add('tick'); }
+      const loose = list.some((c) => c.id === 'loose');
+      modal.querySelector('[data-cw-count]').textContent = n + (n === 1 ? ' crate' : ' crates') + (loose ? ' + loose' : '') + ' changed';
+      return;
+    }
     let kg = 0, pcs = 0, n = 0;
     if (state.dir === 'in') {
       readIn().forEach((c) => { kg += c.qty; pcs += num(c.pcs); n++; });
@@ -227,8 +339,37 @@
     modal.querySelector('[data-cw-count]').textContent = n + (n === 1 ? ' crate' : ' crates');
   }
 
+  /**
+   * Receiving: the heads, production date and expiry date typed on a crate go down to the crates below it that have not
+   * been typed on themselves; a weight typed gives the next crate this crate's heads and dates. The weight is never
+   * copied. Every copied value can still be changed (and is then the crate's own).
+   */
+  function carryDown(el) {
+    const k = el.dataset.c, tr = el.closest('tr');
+    if (!tr) return;
+    const pop = (row) => { row.classList.remove('row-copied'); void row.offsetWidth; row.classList.add('row-copied'); };
+    if (k === 'pcs' || k === 'prod' || k === 'exp') {
+      el.dataset.own = '1';
+      for (let n = tr.nextElementSibling; n; n = n.nextElementSibling) {
+        const f = n.querySelector('[data-c="' + k + '"]');
+        if (f && f.dataset.own !== '1' && f.value !== el.value) { f.value = el.value; pop(n); }
+      }
+    } else if (k === 'qty' && el.value.trim() !== '') {
+      const n = tr.nextElementSibling;
+      if (!n) return;
+      let copied = false;
+      ['pcs', 'prod', 'exp'].forEach((c) => {
+        const src = tr.querySelector('[data-c="' + c + '"]'), f = n.querySelector('[data-c="' + c + '"]');
+        if (src && f && f.dataset.own !== '1' && src.value !== '' && f.value !== src.value) { f.value = src.value; copied = true; }
+      });
+      if (copied) pop(n);
+    }
+  }
+
   function onInput(e) {
     const el = e.target;
+    if (state && state.dir === 'in' && el.matches('input[data-c]')) carryDown(el);
+    if (state && state.dir === 'adjust' && el.matches('[data-cw-new], [data-cw-diff]')) adjustInput(el);
     if (el.matches('[data-cw-tick]')) {
       const tr = el.closest('tr');
       const take = tr.querySelector('[data-cw-take]');
@@ -257,6 +398,8 @@
     if (b.hasAttribute('data-cw-add')) addIn(Math.max(1, Math.min(200, num(modal.querySelector('#cwAddN').value) || 1)));
     if (b.hasAttribute('data-cw-rep')) replicate();
     if (b.hasAttribute('data-cw-oldest')) pickOldest();
+    if (b.hasAttribute('data-cw-zero')) adjustAll(true);
+    if (b.hasAttribute('data-cw-clear')) adjustAll(false);
     if (b.hasAttribute('data-cw-del')) { b.closest('tr').remove(); renumber(); totals(); }
   }
 
@@ -270,13 +413,22 @@
       if (!next) { addIn(1); next = modal.querySelector('[data-cw-rows] tr:last-child'); }
       const f = next && next.querySelector('input[data-c="qty"]');
       if (f) { f.focus(); f.select(); }
+    } else if (el.matches && el.matches('[data-cw-new], [data-cw-diff]')) {
+      // Enter goes to the same box of the next crate
+      e.preventDefault();
+      const key = el.matches('[data-cw-new]') ? '[data-cw-new]' : '[data-cw-diff]';
+      let next = el.closest('tr').nextElementSibling;
+      while (next && next.hidden) next = next.nextElementSibling;
+      const f = next && next.querySelector(key);
+      if (f) { f.focus(); f.select(); }
     } else if (el.matches && el.matches('input:not([type=search])')) {
       e.preventDefault();
     }
   }
 
   function save() {
-    const list = state.dir === 'in' ? readIn() : readOut();
+    if (state.dir === 'adjust' && checkAdj()) { alert('A weight is below 0, or above what its crate came in with. Correct the boxes marked in red.'); return; }
+    const list = state.dir === 'in' ? readIn() : (state.dir === 'adjust' ? readAdjust() : readOut());
     if (state.dir === 'in') {
       const seen = {};
       for (const c of list) {

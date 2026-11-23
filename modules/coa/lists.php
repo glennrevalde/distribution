@@ -19,15 +19,19 @@ $lists = [
         'clearing_account_id' => ['POS clearing account', 'select', $accounts], 'show_in_pos' => ['POS payment option', 'bool'], 'is_active' => ['Active', 'bool'],
     ]],
     'price_levels' => ['Price levels', ['name' => ['Name', 'text'], 'adjust_pct' => ['Adjust standard price by %', 'num'], 'is_active' => ['Active', 'bool']]],
-    'sales_reps' => ['Sales representatives', [
-        'name' => ['Name', 'text'], 'initials' => ['Initials', 'text'], 'user_id' => ['Linked user', 'select', Lookup::users()],
+    'sales_reps' => ['Sales representatives', array_merge([
+        'name' => ['Name', 'text'], 'initials' => ['Initials', 'text'],
+    ], SalesReps::ready() ? ['rep_type' => ['Kind', 'select', SalesReps::TYPES]] : [], [
+        'user_id' => ['Linked user', 'select', Lookup::users()],
         'commission_pct' => ['Commission %', 'num'], 'is_active' => ['Active', 'bool'],
-    ]],
+    ])],
     'customer_types' => ['Customer types', ['name' => ['Name', 'text']]],
     'item_categories' => ['Item categories', ['name' => ['Name', 'text']]],
     'billing_groups' => ['Billing groups', ['name' => ['Name', 'text']]],
 ];
 $tab = array_key_exists(g('tab'), $lists) ? g('tab') : 'terms';
+// v2: "Add new sales representative" from a drop-down opens this list's form in a window (QuickAdd)
+$popup = QuickAdd::popup() && $tab === 'sales_reps';
 [$title, $fields] = $lists[$tab];
 $edit = gint('id') ? DB::row("SELECT * FROM `$tab` WHERE id = :id", ['id' => gint('id')]) : null;
 
@@ -56,6 +60,13 @@ handle_post(function () use ($tab, $fields, $edit, $pageKey, $title) {
     if (($d['name'] ?? $d['code'] ?? '') === '') {
         fail('Enter a name.');
     }
+    if ($tab === 'sales_reps' && isset($d['rep_type']) && !isset(SalesReps::TYPES[(string)$d['rep_type']])) {
+        $d['rep_type'] = 'sales_rep';
+    }
+    // v2: one person, one sales representative (each is also a customer, so a second entry would split their shortages)
+    if ($tab === 'sales_reps' && DB::value('SELECT 1 FROM sales_reps WHERE LOWER(name) = LOWER(:n)' . ($edit ? ' AND id <> :id' : ''), $edit ? ['n' => $d['name'], 'id' => $edit['id']] : ['n' => $d['name']])) {
+        fail($d['name'] . ' is already on the Sales Rep list. Choose them from the list, or give the new person a different name.');
+    }
     if ($edit) {
         DB::update($tab, $d, 'id = :id', ['id' => $edit['id']]);
         Audit::log('edit', 'coa', $tab, (int)$edit['id'], $d['name'] ?? $d['code'], ['before' => $edit, 'after' => $d, 'page_key' => $pageKey]);
@@ -63,11 +74,45 @@ handle_post(function () use ($tab, $fields, $edit, $pageKey, $title) {
         $id = DB::insert($tab, $d);
         Audit::log('create', 'coa', $tab, $id, $d['name'] ?? $d['code'], ['snapshot' => $d, 'page_key' => $pageKey]);
     }
+    // v2: every sales representative, van salesman and cashier is also a customer (shortages are charged to them)
+    if ($tab === 'sales_reps') {
+        $rid = (int)($edit['id'] ?? $id);
+        if ((int)($d['is_active'] ?? 1) === 1) {
+            SalesReps::ensureCustomer($rid);
+        }
+        if ($edit && ($cid = (int)DB::value('SELECT customer_id FROM sales_reps WHERE id = :id', ['id' => $rid]))) {
+            // the employee's customer follows a new name (it is the same person)
+            $cname = (string)DB::value('SELECT name FROM customers WHERE id = :c', ['c' => $cid]);
+            if ($cname === (string)$edit['name'] && $d['name'] !== $edit['name'] && !DB::value('SELECT 1 FROM customers WHERE name = :n AND id <> :c', ['n' => $d['name'], 'c' => $cid])) {
+                DB::update('customers', ['name' => $d['name']], 'id = :id', ['id' => $cid]);
+            }
+        }
+        QuickAdd::finish('rep', $rid);
+    }
     flash('success', $title . ' updated.');
     redirect_after_save(url($pageKey, ['tab' => $tab]), url($pageKey, ['tab' => $tab, 'id' => $edit['id'] ?? ($id ?? null)]));
 });
 
 $rows = DB::all("SELECT * FROM `$tab` ORDER BY " . (isset($fields['name']) ? 'name' : 'id'));
+if ($popup) {
+    // the window over a transaction: the form only (Cancel closes the window)
+    Access::require($pageKey, 'create');
+    layout_start('New sales representative', ['no_title' => true]);
+    ?>
+    <form method="post" class="card qa-list-form"><div class="card-body row g-2"><?= csrf_field() ?>
+      <?= input_field('name', 'Name', fv('name', null, (string)g('prefill')), ['class' => 'col-md-6', 'required' => true, 'extra' => 'autofocus maxlength="80"']) ?>
+      <?= input_field('initials', 'Initials', fv('initials'), ['class' => 'col-6 col-md-3', 'extra' => 'maxlength="10"']) ?>
+      <?= input_field('commission_pct', 'Commission %', fv('commission_pct', null, '0'), ['class' => 'col-6 col-md-3']) ?>
+      <?php if (SalesReps::ready()): ?><?= select_field('rep_type', 'Kind', SalesReps::TYPES, fv('rep_type', null, 'sales_rep'), ['class' => 'col-md-6', 'no_add' => true]) ?><?php endif; ?>
+      <?= select_field('user_id', 'Linked user (optional)', Lookup::users(), fv('user_id'), ['blank' => '', 'class' => 'col-md-6', 'no_add' => true]) ?>
+      <input type="hidden" name="is_active" value="1">
+      <p class="col-12 small text-muted mb-1">Saved, the person is put in the box you came from. They are also added as a customer of type Employee, so that a shortage can be charged to them and collected with Receive Payments.</p>
+      <div class="col-12"><?= save_buttons('Save') ?></div>
+    </div></form>
+    <?php
+    layout_end();
+    return;
+}
 layout_start('Terms, Tax Codes & Other Lists');
 ?>
 <ul class="nav nav-tabs mb-3">

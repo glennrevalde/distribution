@@ -287,7 +287,10 @@ CREATE TABLE sales_reps (
   initials  VARCHAR(10)  NULL,
   user_id   INT UNSIGNED NULL,
   commission_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
+  rep_type  VARCHAR(12)  NOT NULL DEFAULT 'sales_rep',   -- distribution: sales_rep, van (van salesman), cashier
+  customer_id INT UNSIGNED NULL,                         -- distribution: the employee as a customer, for shortages charged to them
   is_active TINYINT(1)   NOT NULL DEFAULT 1,
+  KEY ix_rep_customer (customer_id),
   CONSTRAINT fk_rep_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -430,6 +433,7 @@ CREATE TABLE sites (
   name      VARCHAR(80)  NOT NULL,
   site_type ENUM('warehouse','store','stockroom','van','damaged','other') NOT NULL DEFAULT 'warehouse',
   address   VARCHAR(255) NULL,
+  sales_rep_id INT UNSIGNED NULL,                        -- distribution: the van salesman (or outlet cashier) answerable for its stock
   is_active TINYINT(1)   NOT NULL DEFAULT 1,
   UNIQUE KEY uq_sites_code (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -605,7 +609,8 @@ CREATE TABLE transactions (
   -- payment, credit_memo, refund, purchase_order, bill, vendor_credit, item_receipt,
   -- bill_payment, check, deposit, transfer, journal, inventory_adjustment,
   -- inventory_transfer, build_assembly, pos_sale, pos_return, depreciation,
-  -- asset_disposal, bank_charge, bank_interest, item_processing, cash_voucher, vendor_advance
+  -- asset_disposal, bank_charge, bank_interest, item_processing, cash_voucher, vendor_advance,
+  -- shortage_charge (distribution: stock short charged to the employee answerable for it, at cost)
   txn_no             VARCHAR(30)  NULL,
   txn_date           DATE         NOT NULL,
   due_date           DATE         NULL,
@@ -2025,7 +2030,7 @@ CREATE TABLE crates (
   unit_cost       DECIMAL(15,4) NOT NULL DEFAULT 0,
   production_date DATE NULL,
   expiry_date     DATE NULL,
-  status          VARCHAR(10)  NOT NULL DEFAULT 'open',  -- open, sold, converted
+  status          VARCHAR(10)  NOT NULL DEFAULT 'open',  -- open, sold, converted, used (emptied by shrinkage, shortage or an adjustment)
   converted_at    DATETIME     NULL,
   converted_by    INT UNSIGNED NULL,
   convert_note    VARCHAR(255) NULL,
@@ -2046,7 +2051,7 @@ CREATE TABLE crate_movements (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   crate_id    BIGINT UNSIGNED NOT NULL,
   move_date   DATE         NOT NULL,
-  kind        VARCHAR(10)  NOT NULL,       -- receive, sale, auto, transfer, convert
+  kind        VARCHAR(10)  NOT NULL,       -- receive, sale, auto, transfer, convert, shrink, shortage
   txn_id      BIGINT UNSIGNED NULL,
   line_id     BIGINT UNSIGNED NULL,
   qty         DECIMAL(15,4) NOT NULL DEFAULT 0,  -- base units taken out (received: put in)
@@ -2062,6 +2067,72 @@ CREATE TABLE crate_movements (
   KEY ix_cm_line (line_id),
   KEY ix_cm_date (move_date),
   CONSTRAINT fk_cm_crate FOREIGN KEY (crate_id) REFERENCES crates(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- Distribution (v2): Inventory Transfer Closing. The van salesman (or an outlet) remits the day and sends back what
+-- is left; each line is a crate or an item, with what was on hand, what came back and the difference, split into
+-- shrinkage (adjusted to the shrinkage account) and shortage (charged to the employee as a receivable, at cost).
+-- ---------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS transfer_closing_lines;
+DROP TABLE IF EXISTS transfer_closings;
+CREATE TABLE transfer_closings (
+  id                  INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  closing_no          VARCHAR(30)  NOT NULL,
+  closing_date        DATE         NOT NULL,
+  from_site_id        INT UNSIGNED NOT NULL,              -- the van or outlet closed
+  to_site_id          INT UNSIGNED NOT NULL,              -- the warehouse or cold storage the stock goes back to
+  sales_rep_id        INT UNSIGNED NULL,                  -- the van salesman or cashier who remits
+  customer_id         INT UNSIGNED NULL,                  -- who the shortage is charged to (the employee as a customer)
+  shrink_account_id   INT UNSIGNED NULL,
+  shortage_account_id INT UNSIGNED NULL,
+  transferred_by      VARCHAR(80)  NULL,
+  checked_by          VARCHAR(80)  NULL,
+  received_by         VARCHAR(80)  NULL,
+  memo                VARCHAR(255) NULL,
+  transfer_txn_id     BIGINT UNSIGNED NULL,               -- the inventory transfer back
+  shrink_txn_id       BIGINT UNSIGNED NULL,               -- the inventory adjustment for the shrinkage
+  shortage_txn_id     BIGINT UNSIGNED NULL,               -- the shortage charge
+  balance_qty         DECIMAL(15,4) NOT NULL DEFAULT 0,
+  transfer_qty        DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shrink_qty          DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shortage_qty        DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shrink_amount       DECIMAL(15,2) NOT NULL DEFAULT 0,
+  shortage_amount     DECIMAL(15,2) NOT NULL DEFAULT 0,
+  status              VARCHAR(10)  NOT NULL DEFAULT 'posted',   -- posted, void
+  void_reason         VARCHAR(255) NULL,
+  voided_by           INT UNSIGNED NULL,
+  voided_at           DATETIME     NULL,
+  created_by          INT UNSIGNED NULL,
+  created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_tc_no (closing_no),
+  KEY ix_tc_date (closing_date),
+  KEY ix_tc_from (from_site_id, closing_date),
+  KEY ix_tc_rep (sales_rep_id),
+  KEY ix_tc_transfer (transfer_txn_id),
+  KEY ix_tc_shrink (shrink_txn_id),
+  KEY ix_tc_shortage (shortage_txn_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE transfer_closing_lines (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  closing_id   INT UNSIGNED NOT NULL,
+  line_no      INT          NOT NULL DEFAULT 0,
+  item_id      INT UNSIGNED NOT NULL,
+  crate_id     BIGINT UNSIGNED NULL,                      -- a crate line: one crate (else the item's stock outside crates)
+  crate_no     VARCHAR(30)  NULL,
+  unit         VARCHAR(20)  NULL,
+  balance      DECIMAL(15,4) NOT NULL DEFAULT 0,          -- on hand at the van / outlet when closed
+  transfer_qty DECIMAL(15,4) NOT NULL DEFAULT 0,          -- came back (crates, kilos, packs ...)
+  shrink_qty   DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shortage_qty DECIMAL(15,4) NOT NULL DEFAULT 0,
+  unit_cost    DECIMAL(15,4) NOT NULL DEFAULT 0,
+  note         VARCHAR(255) NULL,
+  KEY ix_tcl_closing (closing_id),
+  KEY ix_tcl_item (item_id),
+  KEY ix_tcl_crate (crate_id),
+  CONSTRAINT fk_tcl_closing FOREIGN KEY (closing_id) REFERENCES transfer_closings(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

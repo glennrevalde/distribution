@@ -266,7 +266,10 @@ html.is-leaving .nav-progress span { opacity: 1; animation: conveyor-go 8s cubic
 .main-bare { padding: 1rem; }
 @media (max-width: 575.98px) { .main-area { padding: .85rem .75rem 2rem; } }
 /* the page settles in once, when it is opened */
-.main-area > .page-bar, .main-area > .page-bar ~ * { animation: settle .38s var(--ease) both; }
+/* "backwards": once settled, nothing of the animation stays on the element, so it makes no layer of its own and a menu
+   opened in one block (New item, Categories, a drop-down list) shows over the blocks below it */
+.main-area > .page-bar, .main-area > .page-bar ~ * { animation: settle .38s var(--ease) backwards; }
+.main-area > .page-bar { position: relative; z-index: 30; }
 .main-area > .page-bar ~ *:nth-child(3) { animation-delay: .04s; }
 .main-area > .page-bar ~ *:nth-child(4) { animation-delay: .08s; }
 .main-area > .page-bar ~ *:nth-child(5) { animation-delay: .12s; }
@@ -479,6 +482,38 @@ tr.row-new > td { animation: rowNew 1.2s ease-out; }
 .crate-foot { justify-content: space-between; gap: .75rem; }
 .crate-foot-btns { display: flex; gap: .5rem; margin-left: auto; }
 
+/* v3: Adjust Quantity/Value on Hand, crate by crate: what each crate has now, its new weight and the difference */
+.crate-adjust tbody tr.is-picked > td { background: var(--crate-tint); }
+.crate-adjust .crate-now { white-space: nowrap; font-weight: 600; }
+.crate-adjust .crate-now small { display: block; font-size: .72rem; font-weight: 400; color: var(--steel); }
+.crate-adjust input[data-cw-new] { width: 112px; margin-left: auto; font-weight: 700; font-size: .95rem; }
+.crate-adjust input[data-cw-diff] { width: 100px; margin-left: auto; }
+.crate-adjust tr.crate-loose > td { border-top: 2px solid var(--line); background: var(--panel-2); }
+.crate-adjust tr.crate-loose.is-picked > td { background: var(--crate-tint); }
+.crate-adjust td.crate-loose-name { font-family: var(--font); font-weight: 600; }
+.crate-adjust td.crate-loose-name small { display: block; font-weight: 400; font-size: .72rem; color: var(--steel); }
+.crate-adjust tfoot th { white-space: nowrap; }
+.crate-adjust tfoot .neg { color: var(--bad); }
+@media (max-width: 575.98px) {
+  .crate-adjust thead { display: none; }
+  .crate-adjust, .crate-adjust tbody, .crate-adjust tfoot { display: block; }
+  .crate-adjust tbody tr, .crate-adjust tfoot tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .25rem .5rem; padding: .6rem .25rem; border-bottom: 1px solid var(--line-soft); }
+  .crate-adjust tbody td, .crate-adjust tfoot th { display: block; border: 0; padding: 0; background: none !important; text-align: left !important; }
+  .crate-adjust tbody tr.is-picked { background: var(--crate-tint); }
+  .crate-adjust tbody td:nth-child(1) { grid-column: 1 / 3; font-size: 1.05rem; }
+  .crate-adjust tbody td:nth-child(2), .crate-adjust tbody td:nth-child(3) { display: none; }
+  .crate-adjust tbody td:nth-child(4) { grid-column: 3; text-align: right !important; font-size: .78rem; }
+  .crate-adjust tr.crate-loose td:nth-child(2), .crate-adjust tr.crate-loose td:nth-child(3) { display: none; }
+  .crate-adjust tbody td:nth-child(5)::before, .crate-adjust tbody td:nth-child(6)::before, .crate-adjust tbody td:nth-child(7)::before { display: block; font-size: .7rem; font-weight: 500; color: var(--steel); }
+  .crate-adjust tbody td:nth-child(5)::before { content: "Now"; }
+  .crate-adjust tbody td:nth-child(6)::before { content: "New weight"; }
+  .crate-adjust tbody td:nth-child(7)::before { content: "Adjust +/-"; }
+  .crate-adjust input[data-cw-new], .crate-adjust input[data-cw-diff] { width: 100%; }
+  .crate-adjust tfoot th:first-child { grid-column: 1 / -1; }
+  .crate-tools .crate-find { width: auto; flex: 1 1 100%; }
+  .crate-tools > .btn { flex: 1 1 0; }
+}
+
 /* ------------------------------------------------------------------ Crate Center */
 .crate-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .75rem; }
 .crate-sumtable { max-height: 330px; overflow: auto; }
@@ -565,6 +600,154 @@ tr.move-convert td:nth-child(2) { color: #6d4fb3; }
   .pickup-chev { grid-row: 1; grid-column: 2; }
   .pickup-toggle > .state-text { grid-column: 1; }
 }
+
+/* ------------------------------------------------------------------ Inventory Transfer Closing (v2) */
+.tc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.tc-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.tc-find { position: relative; min-width: 200px; }
+.tc-find .bi { position: absolute; left: .6rem; top: 50%; transform: translateY(-50%); color: var(--steel-2); font-size: .8rem; pointer-events: none; }
+.tc-find .form-control { padding-left: 1.8rem; }
+.tc-grid th, .tc-grid td { vertical-align: middle; }
+.tc-grid .tc-c-use { width: 2.2rem; text-align: center; }
+.tc-grid .tc-c-item strong { display: block; font-family: var(--font-title); font-weight: 650; }
+.tc-grid .tc-name { display: block; font-size: .82rem; color: var(--ink-2); line-height: 1.25; }
+.tc-grid .tc-c-crate .crate-no { display: inline-block; font-family: var(--font-gauge); background: var(--rail); color: var(--crate); padding: .05rem .4rem; border-radius: 4px; font-size: .85rem; }
+.tc-crate-meta { display: block; font-size: .74rem; color: var(--steel); margin-top: .15rem; }
+.tc-grid .tc-c-unit select { min-width: 4.6rem; }
+.tc-grid .tc-c-q input { width: 6.6rem; margin-left: auto; }
+.tc-grid .tc-c-note input { min-width: 8rem; }
+.tc-grid .tc-c-bal { font-weight: 600; white-space: nowrap; }
+.tc-grid .tc-c-var { white-space: nowrap; color: var(--steel); }
+.tc-grid .tc-c-var.is-var { color: var(--bad); font-weight: 600; }
+.tc-grid tr.is-off > td:not(.tc-c-use) { opacity: .42; }
+.tc-grid tr.is-off input:not([data-tc-use]), .tc-grid tr.is-off select { pointer-events: none; }
+.tc-grid tr.is-bad > td { background: #fdf1ef; }
+.tc-grid tr.is-bad [data-tc-q] { border-color: #e3a196; }
+.tc-grid tr.is-neg > td { background: var(--panel-2); color: var(--steel); }
+.tc-neg-note { display: block; font-size: .72rem; font-weight: 600; color: var(--bad); }
+.tc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; padding: .85rem 1rem; background: var(--panel-2); border-top: 1px solid var(--line-soft); border-radius: 0 0 var(--radius) var(--radius); }
+.tc-sum { display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; margin: 0; }
+.tc-sum dt { font-size: .74rem; font-weight: 600; color: var(--steel); }
+.tc-sum dd { margin: 0; font-family: var(--font-title); font-weight: 650; font-size: 1.05rem; color: var(--ink); }
+.tc-list tr.is-void td { color: var(--steel); }
+.tc-list tr.is-void td:first-child a { text-decoration: line-through; }
+.tc-facts .tc-facts-wide { grid-column: 1 / -1; }
+.tc-sheet .tc-amber { color: var(--warn); font-weight: 600; }
+.tc-sheet .tc-red { color: var(--bad); font-weight: 600; }
+.tc-signs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; margin: 1.5rem 0 .5rem; }
+.tc-signs > div { display: flex; flex-direction: column; gap: .3rem; }
+.tc-sign-name { min-height: 1.6rem; border-bottom: 1px solid var(--ink-2); font-weight: 600; padding: 0 .2rem; }
+.tc-sign-label { font-size: .78rem; color: var(--steel); }
+.tc-print { max-width: 1100px; margin: 0 auto; }
+.tc-print-title { font-family: var(--font-title); font-size: 1.5rem; margin: .75rem 0 1rem; }
+@media print { .tc-print .crate-facts { box-shadow: none; } .tc-signs { margin-top: 2.5rem; } }
+.tc-sheet .tc-s-name { min-width: 11rem; }
+@media screen and (max-width: 767.98px) {
+  .tc-sheet, .tc-sheet > tbody { display: block; }
+  .tc-sheet > thead { display: none; }
+  .tc-sheet > tbody > tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .35rem .6rem; padding: .75rem .9rem; border-bottom: 1px solid var(--line-soft); }
+  .tc-sheet > tbody > tr > td { display: block; border: 0; padding: 0 !important; text-align: left !important; min-width: 0; background: none !important; box-shadow: none !important; }
+  .tc-sheet td[data-label]::before { content: attr(data-label); display: block; font-family: var(--bs-body-font-family); font-size: .7rem; font-weight: 500; color: var(--steel); }
+  .tc-sheet .tc-s-code { grid-column: 1 / -1; font-family: var(--font-title); }
+  .tc-sheet .tc-s-name { grid-column: 1 / -1; min-width: 0; margin-top: -.3rem; color: var(--ink-2); font-size: .86rem; }
+  .tc-sheet .tc-s-crate:empty, .tc-sheet .tc-s-none { display: none !important; }
+  .tc-sheet .tc-s-note { grid-column: 1 / -1; }
+}
+@media (max-width: 767.98px) {
+  .tc-head { align-items: stretch; }
+  .tc-tools { width: 100%; }
+  .tc-find { flex: 1 1 100%; }
+  .tc-tools .btn { flex: 1 1 auto; }
+  .tc-grid, .tc-grid > tbody { display: block; }
+  .tc-grid > thead { display: none; }
+  .tc-grid > tbody > tr { display: grid; grid-template-columns: 1.75rem repeat(3, minmax(0, 1fr)); gap: .3rem .55rem; padding: .8rem .85rem; border-bottom: 1px solid var(--line-soft);
+    grid-template-areas: "use item item item" "use crate crate crate" ". unit bal var" ". tr shr sho" ". note note note"; }
+  .tc-grid > tbody > tr[hidden] { display: none; }
+  .tc-grid > tbody > tr > td { display: block; border: 0; padding: 0 !important; background: none; min-width: 0; }
+  .tc-grid .tc-c-use { grid-area: use; text-align: left; padding-top: .15rem !important; }
+  .tc-grid .tc-c-item { grid-area: item; }
+  .tc-grid .tc-c-crate { grid-area: crate; }
+  .tc-grid .tc-c-crate:empty { display: none; }
+  .tc-grid .tc-c-unit { grid-area: unit; }
+  .tc-grid .tc-c-bal { grid-area: bal; text-align: left !important; }
+  .tc-grid .tc-c-var { grid-area: var; text-align: left !important; }
+  .tc-grid .tc-c-q[data-label="Transfer qty/wgt"] { grid-area: tr; }
+  .tc-grid .tc-c-q[data-label="Shrinkage"] { grid-area: shr; }
+  .tc-grid .tc-c-q[data-label="Shortage"] { grid-area: sho; }
+  .tc-grid .tc-c-note { grid-area: note; }
+  .tc-grid .tc-c-unit, .tc-grid .tc-c-bal, .tc-grid .tc-c-var { font-size: .86rem; }
+  .tc-grid td[data-label]::before { content: attr(data-label); display: block; font-size: .7rem; font-weight: 500; color: var(--steel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: .1rem; }
+  .tc-grid .tc-c-q input, .tc-grid .tc-c-unit select { width: 100%; min-width: 0; }
+  .tc-grid .tc-c-note input { min-width: 0; }
+  .tc-signs { grid-template-columns: 1fr; gap: 1rem; }
+  .tc-foot .scale-readout { width: 100%; justify-content: center; }
+}
+
+/* Shortage Charges: what each person still owes */
+.owe-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: .7rem; }.owe-card { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .3rem .8rem; padding: .8rem 1rem; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--bad); border-radius: var(--radius); box-shadow: var(--lift-1); }
+.owe-who strong { display: block; font-family: var(--font-title); font-weight: 650; font-size: 1.02rem; }
+.owe-who span { font-size: .78rem; color: var(--steel); }
+.owe-fig { font-family: var(--font-title); font-weight: 700; font-size: 1.25rem; color: var(--bad); text-align: right; }
+.owe-card .btn { grid-column: 1 / -1; justify-self: start; }
+/* v3: Adjust Quantity/Value on Hand, crate by crate (the column kept narrow so the lines still fit the page) */
+.adj-lines .adj-cratecell { white-space: nowrap; width: 1%; }
+.adj-lines .adj-cratecell .crate-btn { padding-left: .45rem; padding-right: .5rem; }
+@media (min-width: 768px) {
+  .adj-lines .adj-col-item { min-width: 220px; }
+  .adj-lines td input { min-width: 80px; }
+  .adj-lines td select.adj-uom { min-width: 92px; }
+  .adj-lines .adj-desc { min-width: 7rem; }
+}
+@media (min-width: 768px) and (max-width: 1399.98px) {
+  .adj-lines .adj-col-item { min-width: 196px; }
+  .adj-lines td select.adj-uom { min-width: 84px; }
+}
+.adj-lines .adj-cratecell .crate-btn, .adj-batch-crates .crate-btn { white-space: nowrap; }
+.adj-batch-crates { display: flex; align-items: center; justify-content: flex-end; gap: .35rem; }
+.adj-batch-crates .adj-new { margin-left: 0 !important; }
+@media (max-width: 575.98px) {
+  .adj-batch-crates { flex-direction: column; align-items: flex-end; }
+  .adj-batch-crates .crate-btn { width: 100px; justify-content: center; }
+}
+.adj-crate-note { color: var(--ink-2) !important; }
+.adj-crate-note .bi { color: var(--crate-deep); }
+@media (max-width: 767.98px) {
+  .adj-lines td[data-label="Crates"] { display: inline-block; width: 48%; vertical-align: top; }
+  .adj-item-form.adj-mode-value .adj-lines td[data-label="Crates"] { display: none; }
+}
+@media (max-width: 767.98px) {
+  .adj-lines tr.adj-line > td { background: none !important; box-shadow: none !important; }
+  .tc-list td { white-space: nowrap; }
+}
+
+/* Adjust Quantity/Value on Hand: show the balances, charge a shortage to a person */
+.adj-bal-toggle { display: flex; gap: .55rem; align-items: flex-start; width: 100%; margin: 0; padding: .45rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; box-shadow: var(--sunk); }
+.adj-bal-toggle .form-check-input { margin-top: .2rem; flex: 0 0 auto; }
+.adj-bal-toggle strong { display: block; font-size: .86rem; }
+.adj-bal-toggle small { display: block; font-size: .72rem; color: var(--steel); line-height: 1.25; }
+.adj-bal-toggle:has(input:checked) { border-color: #9cc0d8; background: #eef6fb; }
+.adj-short-note { display: flex; gap: .5rem; align-items: flex-start; padding: .55rem .75rem; border-left: 3px solid var(--bad); background: #fdf3f1; border-radius: 6px; font-size: .86rem; color: var(--ink-2); }
+.adj-short-note .bi { color: var(--bad); margin-top: .1rem; }
+.pay-rep-note { margin-top: .35rem; font-size: .8rem; color: var(--ink-2); }
+.pay-rep-note .bi { color: var(--cold); }
+
+/* Transfer Inventory: the Crates button of a line */
+.tr-crates-cell { width: 1%; white-space: nowrap; }
+.tr-table .qty-from-crates { background: var(--crate-tint); font-weight: 600; }
+/* Transfer Inventory on a phone with the Crates column: the item, what is on hand, then the quantity, crates and line buttons on one row */
+@media (max-width: 575.98px) {
+  #trTable.tr-has-crates > tbody > tr.tr-main { grid-template-columns: minmax(0, 1fr) auto auto; }
+  #trTable.tr-has-crates > tbody > tr.tr-main > td { background: none; box-shadow: none; }
+  #trTable.tr-has-crates > tbody > tr.tr-main > td.tr-avail { grid-column: 1 / -1; }
+  #trTable.tr-has-crates > tbody > tr.tr-main > td.tr-avail:empty { display: none; }
+  #trTable.tr-has-crates .tr-crates-cell .crate-btn { white-space: nowrap; }
+}
+
+/* the crate window: heads and dates copied down to the crates below */
+tr.row-copied input:not(.crate-kg) { animation: copiedIn .8s ease-out; }
+@keyframes copiedIn { from { background-color: #dcecf7; } to { background-color: #fff; } }
+
+.report-table tr.void-row td { color: var(--steel); }
 
 /* a pick-up on a phone: each item is a small block (code and done mark, description, the figures, the button) */
 @media (max-width: 767.98px) {
@@ -663,7 +846,7 @@ body.platform .rail .menu-group { padding-left: 1.2rem; }
 
 /* ------------------------------------------------------------------ less motion when the device asks for it */
 @media (prefers-reduced-motion: reduce) {
-  .main-area > .page-bar, .main-area > .page-bar ~ *, .flash, .dropdown-menu, .pickup-body:not([hidden]), .login-stage .crate-drop, .scale-digits.tick, .crate-btn.needs-crates { animation: none !important; }
+  .main-area > .page-bar, .main-area > .page-bar ~ *, .flash, .dropdown-menu, .pickup-body:not([hidden]), .login-stage .crate-drop, .scale-digits.tick, .crate-btn.needs-crates, tr.row-copied input, tr.row-new > td { animation: none !important; }
   .modal.fade .modal-dialog { transition: none; }
   html.is-leaving .nav-progress span { animation: none; width: 60%; }
 }
@@ -680,3 +863,116 @@ body.login-page .join-side { min-height: 100vh; }
   text-transform: none; letter-spacing: 0;
 }
 .gs .menu-group, .gs .find-col-head, .gs .rd-sub, .gs .rc-group-name, .gs .cm-side-head, .gs .cm-info-head, .gs .cm-info-title, .gs .iq-similar-head { font-size: .8rem; }
+
+/* ------------------------------------------------------------------ the installable app (PWA): app/Pwa.php, assets/js/pwa.js */
+.topbar .bell-btn.pwa-install-btn { width: auto; white-space: nowrap; }
+.topbar .pwa-install-btn .pwa-install-text { font-size: .86rem; font-weight: 600; }
+.topbar .pwa-install-btn.is-ready i { color: var(--cold); }
+@media (max-width: 1359.98px) { .topbar .pwa-install-btn .pwa-install-text { display: none; } }
+/* inside the installed app the install buttons have no purpose */
+html.pwa-standalone [data-pwa-install], html.pwa-standalone [data-pwa-box] { display: none !important; }
+@media (display-mode: standalone), (display-mode: fullscreen) { [data-pwa-install], [data-pwa-box] { display: none !important; } }
+
+.pwa-login-box {
+  display: flex; align-items: center; gap: .75rem; margin-top: 1.25rem; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel-2); box-shadow: var(--lift-1);
+}
+.pwa-login-icon img { display: block; width: 40px; height: 40px; border-radius: 10px; box-shadow: 0 2px 0 rgba(6, 30, 46, .3); }
+.pwa-login-text { flex: 1 1 auto; min-width: 0; line-height: 1.3; }
+.pwa-login-text strong { display: block; font-family: var(--font-title); font-weight: 650; font-size: 1rem; color: var(--ink); }
+.pwa-login-text span { font-size: .8rem; color: var(--steel); }
+.pwa-login-box .btn { flex: 0 0 auto; }
+
+.pwa-dialog {
+  width: min(540px, calc(100% - 1.5rem)); max-height: calc(100% - 2rem); padding: 0; border: 1px solid var(--line); border-radius: 14px; color: var(--ink);
+  background: var(--panel); box-shadow: 0 1px 0 rgba(255, 255, 255, .9) inset, 0 28px 60px -24px rgba(6, 30, 46, .6); overflow: hidden;
+}
+.pwa-dialog[open] { display: flex; flex-direction: column; }
+.pwa-dialog::backdrop { background: rgba(6, 30, 46, .55); }
+.pwa-dialog-head { display: flex; align-items: flex-start; gap: .8rem; padding: 1rem 1.1rem .9rem; border-bottom: 1px solid var(--line-soft); background: linear-gradient(180deg, #fff, var(--panel-2)); }
+.pwa-dialog-head img { flex: 0 0 auto; border-radius: 10px; box-shadow: 0 2px 0 rgba(6, 30, 46, .3); }
+.pwa-dialog-head div { flex: 1 1 auto; min-width: 0; }
+.pwa-dialog-head h2 { margin: 0; font: 700 1.25rem/1.2 var(--font-title); }
+.pwa-dialog-head p { margin: .15rem 0 0; font-size: .84rem; color: var(--steel); }
+.pwa-dialog-body { padding: 1rem 1.1rem; overflow-y: auto; }
+.pwa-lead { margin: 0 0 .75rem; font-size: .92rem; color: var(--ink-2); }
+.pwa-guide h3 { margin: 0 0 .35rem; font: 650 1rem/1.3 var(--font-title); }
+.pwa-guide ol { margin: 0 0 .9rem; padding-left: 1.25rem; font-size: .92rem; }
+.pwa-guide li { margin-bottom: .3rem; }
+.pwa-guide.is-mine { padding: .75rem .9rem .1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); box-shadow: var(--sunk); margin-bottom: .9rem; }
+.pwa-key {
+  display: inline-grid; place-items: center; min-width: 1.6rem; height: 1.45rem; padding: 0 .3rem; margin: 0 .1rem; vertical-align: -.2rem; font-size: .85rem;
+  color: var(--ink); background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; box-shadow: 0 2px 0 var(--line);
+}
+.pwa-warn { display: flex; gap: .65rem; margin-bottom: .9rem; padding: .7rem .8rem; font-size: .88rem; border: 1px solid #ecd28a; border-left: 4px solid var(--warn); border-radius: var(--radius-sm); background: #fff8e6; color: #5c4300; }
+.pwa-warn i { font-size: 1.15rem; color: var(--warn); }
+.pwa-warn code { color: inherit; font-family: inherit; font-size: inherit; font-weight: 600; overflow-wrap: anywhere; }
+.pwa-more { margin-top: .25rem; }
+.pwa-more summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--cold); margin-bottom: .6rem; }
+.pwa-more .pwa-guide { padding-left: .1rem; }
+.pwa-note { margin: .25rem 0 0; font-size: .82rem; color: var(--steel); }
+.pwa-dialog-foot { display: flex; justify-content: flex-end; padding: .75rem 1.1rem; border-top: 1px solid var(--line-soft); background: var(--panel-2); }
+.pwa-dialog-foot .btn { min-width: 6rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .pwa-dialog[open] { animation: pwa-in .22s var(--ease); }
+  @keyframes pwa-in { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: none; } }
+}
+@media (max-width: 575.98px) {
+  .pwa-dialog { width: 100%; max-width: none; margin: auto 0 0; border-radius: 14px 14px 0 0; max-height: 88%; }
+  .pwa-dialog-foot .btn { width: 100%; }
+}
+.pwa-toast {
+  position: fixed; left: 50%; bottom: 1.25rem; z-index: 3000; max-width: calc(100% - 2rem); padding: .65rem 1rem; transform: translate(-50%, 12px); opacity: 0;
+  font-size: .9rem; color: #fff; background: var(--rail); border-radius: var(--radius-sm); box-shadow: 0 12px 28px -12px rgba(6, 30, 46, .7); transition: opacity .2s ease, transform .2s ease;
+}
+.pwa-toast.is-on { opacity: 1; transform: translate(-50%, 0); }
+
+/* ------------------------------------------------------------------ v3: the Inventory Transfer slip (POS printer, Bluetooth printer, PDF) */
+.tr-slip-page.bare { background: var(--frost); }
+.tr-slip-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; max-width: 560px; margin: .5rem auto 1rem; padding: .7rem .9rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--lift-1); }
+.tr-slip-bar-title { display: flex; flex-direction: column; line-height: 1.25; }
+.tr-slip-bar-title strong { font-family: var(--font-title); font-size: 1.05rem; }
+.tr-slip-bar-title span { font-size: .78rem; color: var(--steel); }
+.tr-slip-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.tr-slip-hint { flex: 1 1 100%; font-size: .78rem; color: var(--steel); }
+.tr-slip { max-width: 330px; font-size: .8rem; padding: 16px 14px 14px; }
+.tr-slip.tr-slip-80 { max-width: 420px; }
+.tr-slip-head { text-align: center; display: flex; flex-direction: column; }
+.tr-slip-head strong { font-size: .95rem; }
+.tr-slip-head span { font-size: .72rem; }
+.tr-slip-title { text-align: center; font-weight: 700; letter-spacing: .04em; margin: .55rem 0 .4rem; padding: .3rem 0; border-top: 1px dashed #555; border-bottom: 1px dashed #555; }
+.tr-slip-void { display: block; letter-spacing: .2em; }
+.tr-slip-info { margin: 0 0 .45rem; }
+.tr-slip-info div { display: flex; gap: .4rem; }
+.tr-slip-info dt { font-weight: 400; min-width: 3.6em; }
+.tr-slip-info dt::after { content: ":"; }
+.tr-slip-info dd { margin: 0; }
+.tr-slip-info .is-no dd { font-weight: 700; }
+.tr-slip-table { width: 100%; border-collapse: collapse; font-size: inherit; }
+.tr-slip-table th { font-weight: 700; text-align: left; border-top: 1px dashed #555; border-bottom: 1px dashed #555; padding: 2px 0; }
+.tr-slip-table td { padding: 2px 0; vertical-align: baseline; }
+.tr-slip-table .num { text-align: right; white-space: nowrap; padding-left: 6px; }
+/* the crate number, larger and bold, so it reads at a glance against the number painted on the crate */
+.tr-slip-crate { font-weight: 700; font-size: 1.12em; padding-right: 6px !important; white-space: nowrap; }
+.tr-slip-code { word-break: break-all; }
+.tr-slip-table tfoot td { font-weight: 700; }
+.tr-slip-table tfoot tr.is-first td { border-top: 1px dashed #555; padding-top: 3px; }
+.tr-slip-table tfoot tr.tr-slip-lines td { font-weight: 400; }
+.tr-slip-signs { margin-top: .8rem; border-top: 1px dashed #555; padding-top: .3rem; }
+.tr-slip-sign { display: flex; flex-direction: column; margin-top: .7rem; }
+.tr-slip-line { border-bottom: 1px solid #222; height: 1.9rem; margin: 0 4% .15rem; }
+.tr-slip-name { text-align: center; font-weight: 700; min-height: 1em; }
+.tr-slip-printed { margin-top: .9rem; padding-top: .3rem; border-top: 1px dashed #555; text-align: center; font-size: .68rem; color: #444; }
+@media print { .tr-slip-bar, .bt-note { display: none !important; } .tr-slip-page.bare { background: #fff; } }
+@media (max-width: 575.98px) {
+  .tr-slip-bar { margin: 0 0 .75rem; }
+  .tr-slip-actions { width: 100%; }
+  .tr-slip-actions .btn { flex: 1 1 auto; }
+}
+
+/* v3: on a phone the Help button keeps its word, so a row with the button alone does not read as an empty bar */
+@media (max-width: 575.98px) {
+  .page-bar .help-btn .help-btn-text { display: inline; }
+  .page-bar .help-btn .bi { margin-right: .3rem; }
+}

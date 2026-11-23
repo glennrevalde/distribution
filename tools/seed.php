@@ -56,6 +56,7 @@ function seed_master_data(): void
         ['1065', 'E-wallet Clearing', 'Other Current Asset', null, null],
         ['1070', 'P.O. Card Clearing', 'Other Current Asset', null, null],
         ['1100', 'Accounts Receivable', 'Accounts Receivable', null, null],
+        ['1120', 'Shortage Receivable - Employees', 'Accounts Receivable', null, null],
         ['1150', 'Allowance for Doubtful Accounts', 'Other Current Asset', 'Credit', null],
         ['1200', 'Inventory', 'Other Current Asset', null, null],
         ['1300', 'Input Tax', 'Other Current Asset', null, null],
@@ -138,7 +139,7 @@ function seed_master_data(): void
         'merchant_fees' => '6080', 'interest_income' => '4200', 'retained_earnings' => '3200', 'opening_equity' => '3900',
         'gain_loss_disposal' => '4300', 'processing_variance' => '5100', 'processing_absorbed' => '5200',
         'cvat_withheld' => '1315', 'wht_payable' => '2110', 'vat_withheld_payable' => '2115', 'vendor_advances' => '1410',
-        'group_price_variance' => '4070',
+        'group_price_variance' => '4070', 'shortage_receivable' => '1120',
     ];
     foreach (Accts::KEYS as $key => [$label, $module]) {
         DB::insert('default_accounts', ['setting_key' => $key, 'label' => $label, 'module' => $module, 'account_id' => $acct[$defaults[$key]]]);
@@ -182,7 +183,7 @@ function seed_master_data(): void
         $pl[$n] = DB::insert('price_levels', ['name' => $n, 'adjust_pct' => $p]);
     }
     $ctype = [];
-    foreach (['Supermarket', 'Restaurant', 'Market Retailer', 'Institution', 'Government'] as $n) {
+    foreach (['Supermarket', 'Restaurant', 'Market Retailer', 'Institution', 'Government', 'Employee'] as $n) {
         $ctype[$n] = DB::insert('customer_types', ['name' => $n]);
     }
     $bg = DB::insert('billing_groups', ['name' => 'Weekly Delivery Accounts']);
@@ -218,7 +219,8 @@ function seed_master_data(): void
 
     // ---------------------------------------------------------------- sites & terminals
     $site = [];
-    foreach ([['NGA', 'Naga Cold Storage', 'warehouse'], ['NOT', 'Naga Outlet', 'store'], ['LGZ', 'Legazpi Depot', 'store'], ['RFT1', 'Reefer Truck 1', 'van'], ['DMG', 'Spoilage and Damaged', 'damaged']] as [$c, $n, $t]) {
+    foreach ([['NGA', 'Naga Cold Storage', 'warehouse'], ['NOT', 'Naga Outlet', 'store'], ['LGZ', 'Legazpi Depot', 'store'], ['RFT1', 'Reefer Truck 1', 'van'], ['DMG', 'Spoilage and Damaged', 'damaged'],
+              ['VAN1', 'Van Store 1 (LAB 4417)', 'van'], ['VAN2', 'Van Store 2 (LAB 4428)', 'van']] as [$c, $n, $t]) {
         $site[$c] = DB::insert('sites', ['code' => $c, 'name' => $n, 'site_type' => $t]);
     }
     $term = [];
@@ -270,13 +272,14 @@ function seed_master_data(): void
                 'cust.center' => 'P', 'cust.payments' => 'P', 'cust.invoices' => 'P', 'vend.center' => 'P',
                 'vend.bill_tracker' => 'P', 'vend.bills' => 'P', 'vend.pay_bills' => 'P', 'vend.advances' => 'P', 'bir:*' => 'CEDP',
                 'inv.center' => 'P', 'inv.items' => 'P', 'inv.categories' => 'P', 'inv.adjust' => 'P', 'inv.process' => 'P', 'inv.formulas' => 'P', 'inv.uom' => 'P',
-                'admin.utilities' => 'P',
+                'inv.transfer_closing' => 'P', 'inv.shortages' => 'P', 'admin.utilities' => 'P',
             ],
             'special' => ['view_costs' => '1', 'view_bank_balances' => '1', 'coa_changes' => '1', 'max_amount' => '', 'max_discount_pct' => '0', 'max_price_override_pct' => '0', 'credit_limit_override' => '0', 'closed_period_changes' => '0', 'design_reports' => '1'],
         ],
         'A/R Clerk' => [
             'desc' => 'Customers module transactions and the Customer and Receivables reports.',
-            'pages' => ['home:*' => 'P', 'cust:!report' => 'CEP', 'group:Customer and Receivables Reports' => 'P', 'inv.items' => ''],
+            'pages' => ['home:*' => 'P', 'cust:!report' => 'CEP', 'group:Customer and Receivables Reports' => 'P', 'inv.items' => '',
+                'inv.shortages' => 'P', 'rpt.shortage_rep' => 'P', 'rpt.shortage_detail' => 'P'],
             'special' => ['view_costs' => '0', 'view_bank_balances' => '0', 'max_discount_pct' => '10', 'max_price_override_pct' => '5', 'max_amount' => '50000', 'credit_limit_override' => '0'],
         ],
         'A/P Clerk' => [
@@ -293,6 +296,7 @@ function seed_master_data(): void
                 'inv.process' => 'CEP', 'inv.formulas' => 'CEP', 'inv.uom' => 'CEP', 'rpt.processing_register' => 'P', 'rpt.process_yield' => 'P',
                 'vend.receive_items' => 'CEP', 'vend.purchase_orders' => 'P', 'vend.pickup' => 'CEP', 'vend.allocations' => 'P', 'vend.supplier_items' => 'P',
                 'inv.crates' => 'P', 'inv.crate_convert' => 'CP', 'inv.crate_move' => 'CP', 'group:Crate Reports' => 'P', 'rpt.alloc_pickup' => 'P',
+                'inv.transfer_closing' => 'CP', 'inv.shortages' => 'P', 'group:Shortage and Shrinkage Reports' => 'P',
                 'rpt.qoh_by_site' => 'P', 'rpt.stock_status_item' => 'P', 'rpt.stock_status_vendor' => 'P', 'rpt.stock_status_site' => 'P',
                 'rpt.physical_worksheet' => 'P', 'rpt.pending_builds' => 'P', 'rpt.pending_builds_site' => 'P', 'rpt.negative_inventory' => 'P', 'rpt.inv_no_movement' => 'P',
                 'rpt.inv_movement_summary' => 'P', 'rpt.inv_movement_detail' => 'P', 'rpt.inv_movement_txns' => 'P',
@@ -413,6 +417,17 @@ function seed_master_data(): void
     $rep = [];
     $rep['MS'] = DB::insert('sales_reps', ['name' => 'Maria Santos', 'initials' => 'MS', 'user_id' => $userIds['salesrep'], 'commission_pct' => 1.5]);
     $rep['JR'] = DB::insert('sales_reps', ['name' => 'Jose Reyes', 'initials' => 'JR', 'commission_pct' => 2.5]);
+    // v2 distribution: the van salesmen answerable for the van stores, and the cashier of the outlet; each is also a customer
+    // of type Employee (shortages are charged to them and collected with Receive Payments)
+    if (SalesReps::ready()) {
+        $rep['RM'] = DB::insert('sales_reps', ['name' => 'Rico Mendoza', 'initials' => 'RM', 'commission_pct' => 1, 'rep_type' => 'van']);
+        $rep['AC'] = DB::insert('sales_reps', ['name' => 'Arnel Cruz', 'initials' => 'AC', 'commission_pct' => 1, 'rep_type' => 'van']);
+        $rep['ER'] = DB::insert('sales_reps', ['name' => 'Ella Ramos', 'initials' => 'ER', 'user_id' => $userIds['cashier1'], 'commission_pct' => 0, 'rep_type' => 'cashier']);
+        DB::update('sites', ['sales_rep_id' => $rep['RM']], 'id = :id', ['id' => $site['VAN1']]);
+        DB::update('sites', ['sales_rep_id' => $rep['AC']], 'id = :id', ['id' => $site['VAN2']]);
+        DB::update('sites', ['sales_rep_id' => $rep['ER']], 'id = :id', ['id' => $site['NOT']]);
+        SalesReps::ensureAll();
+    }
 
     // ---------------------------------------------------------------- vendors (sample names; a company enters its own)
     $vend = [];
@@ -616,7 +631,7 @@ function seed_master_data(): void
         ['inv_transfer', 'IT-', 1, 5], ['build', 'BLD-', 1, 5], ['asset', 'FA-', 1, 5], ['pos', 'POS-', 1, 6],
         ['processing', 'PRC-', 1, 5], ['cash_voucher', 'CAV-', 1, 5],
         ['maintenance', 'MNT-', 1, 5], ['debit_memo', 'DM-', 1, 5], ['vendor_advance', 'ADV-', 1, 5], ['advance_apply', 'AAP-', 1, 5],
-        ['allocation', 'AL-', 1, 5], ['crate', '', 1, 1],
+        ['allocation', 'AL-', 1, 5], ['crate', '', 1, 1], ['transfer_closing', 'TC-', 1, 5], ['shortage', 'SHC-', 1, 5],
     ] as [$k, $pfx, $next, $pad]) {
         DB::insert('sequences', ['seq_key' => $k, 'prefix' => $pfx, 'next_no' => $next, 'pad' => $pad]);
     }

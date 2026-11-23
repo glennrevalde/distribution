@@ -23,7 +23,9 @@ if ($siteId && $unit) {
     foreach (Crates::open($itemId, $siteId, (int)g('txn') ?: null) as $c) {
         $list[] = Crates::js($c);
     }
-    $loose = max(0.0, Crates::loose($itemId, $siteId));
+    // v3: a document being edited counts back in what it did itself (Adjust Quantity/Value on Hand adjusts loose stock too)
+    $loose = (int)g('txn') ? Crates::looseFor($itemId, $siteId, (int)g('txn')) : Crates::loose($itemId, $siteId);
+    $loose = g('signed') === '1' ? $loose : max(0.0, $loose);
 }
 json_out([
     'crates' => $list, 'base' => $base, 'unit' => $unit['code'] ?? '', 'loose' => round($loose, 4), 'next' => Crates::peekNo(),

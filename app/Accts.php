@@ -28,6 +28,7 @@ final class Accts
         'inventory_asset'     => ['Inventory Asset', 'inv'],
         'cogs'                => ['Cost of Goods Sold', 'inv'],
         'inventory_adjustment'=> ['Inventory Adjustment (Shrinkage)', 'inv'],
+        'shortage_receivable' => ['Shortage Receivable (Employees)', 'inv'],
         'processing_variance' => ['Processing / Disassembly Variance', 'inv'],
         'group_price_variance'=> ['Item Group Price Variance', 'inv'],
         'processing_absorbed' => ['Processing Labor & Overhead Absorbed', 'inv'],

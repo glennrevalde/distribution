@@ -309,7 +309,24 @@ final class Posting
                     // each tax the customer withheld, to its own account (Creditable Withholding Tax, Creditable VAT Withheld)
                     $this->withheld((float)$t['withholding_amount'], 1, Accts::get('cwt'));
                 }
-                $this->cr((int)($t['account2_id'] ?: Accts::get('ar')), (float)$t['total'] + (float)$t['discount_amount'] + (float)$t['withholding_amount']);
+                // v2: a shortage charge sits on its own receivable account (Shortage Receivable): what the payment
+                // applies to it clears that account, the rest clears Accounts Receivable as before
+                $credit = (float)$t['total'] + (float)$t['discount_amount'] + (float)$t['withholding_amount'];
+                $main = (int)($t['account2_id'] ?: Accts::get('ar'));
+                foreach (DB::all("SELECT tg.account_id, SUM(pa.amount + pa.discount + pa.withholding) AS a
+                                    FROM payment_applications pa JOIN transactions tg ON tg.id = pa.target_txn_id
+                                   WHERE pa.payment_txn_id = :p AND tg.txn_type = 'shortage_charge' AND tg.account_id IS NOT NULL
+                                   GROUP BY tg.account_id", ['p' => $t['id']]) as $sa) {
+                    $amt = r2((float)$sa['a']);
+                    if ((int)$sa['account_id'] !== $main && abs($amt) >= 0.005) {
+                        $this->cr((int)$sa['account_id'], $amt);
+                        $credit -= $amt;
+                    }
+                }
+                $this->cr($main, r2($credit));
+                break;
+            case 'shortage_charge':
+                $this->shortage();
                 break;
             case 'bill':
             case 'item_receipt':
@@ -575,6 +592,38 @@ final class Posting
                 'class_id' => ($l['class_id'] ?? null) ?: ($this->t['class_id'] ?? null)];
             $this->add($this->assetAccount($l), $value, $meta);
             $this->add($adjAcct, -$value, $meta);
+        }
+    }
+
+    /**
+     * v2: stock short at a van or outlet, charged to the employee answerable for it (Inventory Transfer Closing, or an
+     * adjustment for a shortage): Dr Shortage Receivable (the employee as a customer) / Cr Inventory, at cost. It is not
+     * a sale: no income, no cost of goods sold. The receivable is collected through Receive Payments.
+     */
+    private function shortage(): void
+    {
+        $t = $this->t;
+        $recv = (int)($t['account_id'] ?: Accts::get('shortage_receivable'));
+        $adj = (int)($t['account2_id'] ?: Accts::get('inventory_adjustment'));
+        if (!$t['customer_id']) {
+            fail('Choose who the shortage is charged to.');
+        }
+        foreach ($this->lines() as $l) {
+            $amt = r2((float)$l['amount']);
+            $meta = $this->lineMeta($l);
+            $value = 0.0;
+            $q = abs((float)$l['qty']);
+            if ($l['item_id'] && Stock::isTracked($l['item_type']) && $q > 0) {
+                // taken out at exactly what is charged (the average cost when the shortage was recorded)
+                $value = -Stock::move((int)$t['id'], (int)$l['id'], $t['txn_date'], (int)$l['item_id'], $this->site($l), -$q, null, 0.0, $amt > 0 ? -$amt : null);
+                $this->setLineCost((int)$l['id'], $value);
+                $this->add($this->assetAccount($l), -$value, $meta);
+            }
+            $this->add($recv, $amt, $meta);
+            $diff = r2($amt - $value);
+            if (abs($diff) >= 0.005) {
+                $this->add($adj, -$diff, $meta);
+            }
         }
     }
 

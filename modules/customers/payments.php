@@ -279,6 +279,8 @@ layout_start($edit ? 'Edit payment ' . $edit['txn_no'] : 'Receive Payments', [
     'actions' => btn_link(url($pageKey, ['a' => 'list']), 'Payments list', 'btn-outline-secondary', 'list-ul'),
 ]);
 $creditTotal = r2(array_sum(array_column($credits, 'remaining')));
+// v2: every sales representative, van salesman and cashier is on the "Received from" list (shortages are collected here)
+SalesReps::ensureAll();
 // columns that would be empty for this customer are left out, so the table fits without scrolling
 $showJob = (bool)array_filter($docs, fn($d) => (int)$d['customer_id'] !== $customerId);
 $showEarly = (bool)array_filter($docs, fn($d) => Balances::earlyDiscount($d, $payDate) > 0);
@@ -289,8 +291,11 @@ $lead = 6 + ($showJob ? 1 : 0) + ($showEarly ? 1 : 0) + 2;   // columns before C
 <div class="card mb-3"><div class="card-body"><div class="row g-2">
   <div class="col-md-4"><label class="form-label">Received from</label>
     <select class="form-select form-select-sm" name="customer_id"<?= $edit ? ' disabled' : QuickAdd::attr('customer') ?> onchange="location='<?= h(url($pageKey)) ?>&customer_id='+this.value">
-      <?= options(Lookup::customers(false), $customerId, '— choose customer —') ?></select>
+      <?= options(SalesReps::labelCustomers(Lookup::customers(false)), $customerId, '— choose customer, sales rep or cashier —') ?></select>
     <?php if ($edit): ?><input type="hidden" name="customer_id" value="<?= (int)$customerId ?>"><?php endif; ?>
+    <?php if ($customerId && ($repOf = SalesReps::byCustomer()[$customerId] ?? null)): ?>
+    <div class="pay-rep-note"><i class="bi bi-person-badge"></i> <?= h(SalesReps::typeText($repOf['rep_type'])) ?> <strong><?= h($repOf['name']) ?></strong>: the shortages charged to them are listed below with any invoices.</div>
+    <?php endif; ?>
   </div>
   <?= input_field('txn_date', 'Date', $payDate, ['type' => 'date', 'class' => 'col-md-2', 'required' => true]) ?>
   <?= input_field('amount', 'Amount received', fv('amount', $edit ? ['amount' => number_format((float)$edit['total'], 2, '.', '')] : null, ''), ['class' => 'col-md-2', 'extra' => 'id="payAmount" inputmode="decimal" autocomplete="off"']) ?>

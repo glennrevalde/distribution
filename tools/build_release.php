@@ -47,6 +47,10 @@ foreach (['clean' => false, 'sample' => true] as $kind => $demo) {
             $pdo->exec("ALTER TABLE `$t` AUTO_INCREMENT = 1");
         }
         $pdo->exec("INSERT INTO sales_reps (name, initials, user_id, commission_pct) SELECT 'Maria Santos', 'MS', id, 1.5 FROM users WHERE username = 'salesrep'");
+        // v2: the cashier of the outlet stays answerable for it; nobody is a customer yet (made when first charged a shortage)
+        $pdo->exec("INSERT INTO sales_reps (name, initials, user_id, commission_pct, rep_type) SELECT 'Ella Ramos', 'ER', id, 0, 'cashier' FROM users WHERE username = 'cashier1'");
+        $pdo->exec("UPDATE sites SET sales_rep_id = NULL");
+        $pdo->exec("UPDATE sites SET sales_rep_id = (SELECT id FROM sales_reps WHERE rep_type = 'cashier' LIMIT 1) WHERE code = 'NOT'");
         $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
         foreach (['company_name' => 'Your Company Name', 'company_address' => 'Company address', 'company_tin' => '', 'company_phone' => '', 'company_email' => ''] as $k => $v) {
             Settings::set($k, $v);

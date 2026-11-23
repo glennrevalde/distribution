@@ -38,11 +38,13 @@ final class Txn
         'asset_disposal'       => ['Asset Disposal', 'fa.disposal', 'journal'],
         'bank_charge'          => ['Service Charge', 'bank.reconcile', 'journal'],
         'bank_interest'        => ['Interest Earned', 'bank.reconcile', 'journal'],
+        // v2 distribution: stock short at a van or outlet, charged to the employee answerable for it (at cost, not a sale)
+        'shortage_charge'      => ['Shortage Charge', 'inv.shortages', 'shortage'],
     ];
 
     /** Types whose totals are computed from their lines (amount + tax) */
     private const LINE_TOTAL_TYPES = ['estimate', 'sales_order', 'invoice', 'sales_receipt', 'statement_charge', 'finance_charge',
-        'credit_memo', 'purchase_order', 'bill', 'vendor_credit', 'item_receipt', 'check', 'pos_sale', 'pos_return'];
+        'credit_memo', 'purchase_order', 'bill', 'vendor_credit', 'item_receipt', 'check', 'pos_sale', 'pos_return', 'shortage_charge'];
 
     public static function label(string $type): string
     {
@@ -205,6 +207,10 @@ final class Txn
             self::assertPeriod($h['txn_date'], $old);
             if ($old) {
                 Signatures::assertUnlocked($old, 'changed');   // v42: a signed voucher stays as signed
+                // v2: the transfer, adjustment and shortage charge of an Inventory Transfer Closing change only with it
+                if ($ref = TransferClosing::ownerOf((int)$id)) {
+                    fail('This document is part of Inventory Transfer Closing ' . $ref . ' and cannot be changed on its own. Void the closing and record it again.');
+                }
             }
             // an inventory part (or the items of an item group) with no unit cost can not be sold (v29)
             self::assertCosted($type, $lines);
@@ -438,8 +444,12 @@ final class Txn
     {
         $out = [];
         $id = (int)$t['id'];
-        if (in_array($t['txn_type'], ['invoice', 'statement_charge', 'finance_charge', 'bill'], true) && Balances::applied($id) > 0) {
+        if (in_array($t['txn_type'], ['invoice', 'statement_charge', 'finance_charge', 'bill', 'shortage_charge'], true) && Balances::applied($id) > 0) {
             $out[] = 'Payments or credits have been applied to it. Remove them first (edit the payment or credit).';
+        }
+        // v2: a document made by an Inventory Transfer Closing is voided with the closing, all of it at once
+        if ($ref = TransferClosing::ownerOf($id)) {
+            $out[] = 'It is part of Inventory Transfer Closing ' . $ref . '. Void the closing instead (Inventory > Inventory Transfer Closing).';
         }
         $dep = DB::value(
             'SELECT d.txn_no FROM transaction_lines l JOIN transactions d ON d.id = l.txn_id

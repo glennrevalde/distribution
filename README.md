@@ -25,7 +25,7 @@ Plain HTML, CSS, JavaScript, PHP and MySQL. No framework, no build step, no CDN:
 2. Start **Apache** and **MySQL** in the XAMPP Control Panel.
 3. Open <http://localhost/phpmyadmin>, choose **Import**, pick **one** of these files and press **Go**:
    - `database/gsmart_distribution_clean.sql`: the clean database. Chart of accounts, tax codes, terms, U/M sets (kilos and crates, packs and crates), roles with their page access, the user accounts, sites, POS terminals and number series. **No customers, suppliers, items or transactions.** Use this one to start real work.
-   - `database/gsmart_distribution_sample.sql`: the same set-up plus the demo company, **Northpoint Cold Chain Distributors Inc.**, with about two and a half months of sample data in every module: suppliers and their items, allocations and pick-ups (received, being picked up today, waiting for tomorrow), crates received, sold whole and by the kilo, moved, converted and condemned, invoices, sales receipts, POS shifts, bills, payments, banking, fixed assets and more.
+   - `database/gsmart_distribution_sample.sql`: the same set-up plus the demo company, **Northpoint Cold Chain Distributors Inc.**, with about two and a half months of sample data in every module: suppliers and their items, allocations and pick-ups (received, being picked up today, waiting for tomorrow), crates received, sold whole and by the kilo, moved, converted and condemned, crates sent to the van stores and their closings with shrinkage and shortages, shortage charges and their collection, invoices, sales receipts, POS shifts, bills, payments, banking, fixed assets and more.
 
    Each file creates **two databases**: `gsmart_distribution` (Company 1) and `gsmart_distribution_master` (the platform: the Super Admin and the list of companies). Importing drops and recreates their tables.
 4. If your MySQL `root` user has a password, put it in `config/config.php` (`'pass'`), or set the `DB_PASS` environment variable.
@@ -59,10 +59,10 @@ The same accounts are in both .sql files.
 | 3 | `supervisor` | `Demo@12345` | POS Supervisor | Cashier rights plus approving voids, refunds, discounts and price overrides, approval codes, X/Z readings |
 | 4 | `salesrep` | `Demo@12345` | Sales Representative | Estimates, sales orders and invoices (by the crate or by the kilo), sales reports, viewing the Crate Center and crate reports |
 | 5 | `allocator` | `Demo@12345` | Allocation Officer | Supplier Items, Supplier Allocation and Pick-Up Supplier Items for every crew member; views the Crate Center and the receipts; allocation and crate reports |
-| 6 | `invclerk` | `Demo@12345` | Inventory Clerk | Items, U/M sets, sites, receiving, pick-ups, adjustments, transfers, builds, processing, counts, Crate Center, Convert Crates to Kilos, Move Crates, inventory and crate reports |
-| 7 | `arclerk` | `Demo@12345` | A/R Clerk | Every customer transaction (invoices and sales receipts in crates included), payments, statements, receivables reports |
+| 6 | `invclerk` | `Demo@12345` | Inventory Clerk | Items, U/M sets, sites, receiving, pick-ups, adjustments, transfers (by the crate too), Inventory Transfer Closing, Shortage Charges, builds, processing, counts, Crate Center, Convert Crates to Kilos, Move Crates, inventory, crate, shortage and shrinkage reports |
+| 7 | `arclerk` | `Demo@12345` | A/R Clerk | Every customer transaction (invoices and sales receipts in crates included), payments (collecting shortages too), Shortage Charges, statements, receivables and shortage reports |
 | 8 | `apclerk` | `Demo@12345` | A/P Clerk | Allocations, pick-ups and supplier items, purchase orders, receiving, bills, Pay Bills with withholding, advances, debit memos, payables and withholding reports |
-| 9 | `accountant` | `Demo@12345` | Accountant | Financial, Fixed Assets, Banking, BIR Reports and inventory adjustments; views the customer, vendor and inventory pages; every report |
+| 9 | `accountant` | `Demo@12345` | Accountant | Financial, Fixed Assets, Banking, BIR Reports, inventory adjustments and Inventory Transfer Closing; views the customer, vendor and inventory pages; every report |
 | 10 | `auditor` | `Demo@12345` | Auditor | View-only access to every page, report and the audit trail; cannot change anything |
 | 11 | `admin` | `Admin@12345` | Administrator and **Company Owner** | Everything in the company: users, roles, page access, settings, the Company Code and join requests. Must choose a new password at the first log-in. |
 | 12 | `superadmin` | `SuperAdmin@2026` | **Super Admin** (platform) | Belongs to no company. Manages the platform: adds companies, assigns owners, opens any company, runs database updates. |
@@ -88,7 +88,7 @@ The system serves any number of companies. Each has its **own database**, so no 
 
 - **Supplier Items:** per supplier, the items it sells you, the unit it allocates them in (crates, kilos or packs), its own item code and the last cost. Fills the allocation form and prices the pick-up receipt.
 - **Supplier Allocation:** Supplier, Date and Location, then **Go** lists the supplier's items. Type the quantity of each, untick **Use** to leave a line out, copy or delete lines, assign it to a pick-up crew member (or type a name). Buttons: New allocation, Reset, Save, Save & New, Close, Cancel allocation. Status: Allocated, Being picked up, Received, Cancelled.
-- **Pick-Up Supplier Items:** built for the crew's phone. One day at a time (with arrows), **Only the pick-ups assigned to me**, one card per supplier with its progress. **Weigh crates** opens the crate window: one row per crate with Seq, Crate no., Heads, Weight, Production date and Expiry date, **Replicate** copies the first crate's heads and dates down, Enter jumps to the next weight, and a scale readout shows the total. Items by the kilo or pack get a quantity box. **Reset** clears a card. **Pick-up complete** receives everything into the location on an **Item Receipt** at the supplier's last cost; the bill is entered later with Enter Bill for Received Items. Voiding that receipt reopens the pick-up (refused while any of its crates has been sold or moved).
+- **Pick-Up Supplier Items:** built for the crew's phone. One day at a time (with arrows), **Only the pick-ups assigned to me**, one card per supplier with its progress. **Weigh crates** opens the crate window: one row per crate with Seq, Crate no., Heads, Weight, Production date and Expiry date. Heads and dates typed on the first crate are copied to the crates below at once, and every crate whose weight is typed passes its heads and dates to the next one; the weight is never copied and every copied value can be changed. **Replicate** copies the first crate's heads and dates down again, Enter jumps to the next weight, and a scale readout shows the total. Items by the kilo or pack get a quantity box. **Reset** clears a card. **Pick-up complete** receives everything into the location on an **Item Receipt** at the supplier's last cost; the bill is entered later with Enter Bill for Received Items. Voiding that receipt reopens the pick-up (refused while any of its crates has been sold or moved).
 - **Report:** Supplier Allocation vs Pick-Up.
 
 ### Crates
@@ -99,12 +99,35 @@ The system serves any number of companies. Each has its **own database**, so no 
 - **Stock in crates is sold by the crate:** a line that names no crate may only take the loose stock (not in any open crate). Otherwise the sale is refused with the loose quantity, until the crate is chosen or crates are converted.
 - **Convert Crates to Kilos** (Inventory → Crates): stops following the ticked crates; what is left in them is sold as loose kilos. Nothing is posted.
 - **Move Crates to Another Site:** an inventory transfer that carries the crates, with their numbers and dates, to the other site.
+- **Transfer Inventory by the crate:** a line of an item with open crates has a **Crates** button; the crates ticked go to the outlet or van store whole, with their numbers, heads, weights and dates. Kilos without a crate can only come from the loose stock of the site.
+- **Print POS Receipt** (on a saved transfer, and on a closing for its transfer back): a slip for a 58 or 80 mm POS printer or a Bluetooth roll printer, or a PDF to send. One row per crate (**Crate# | Item Code | Qty/Unit**, e.g. `11.65kg`), the crate number in bold and larger, loose quantities in the unit entered, totals with the number of crates, and **Transferred by:** / **Received by:** signature lines.
+- **Adjust Quantity/Value on Hand crate by crate:** an item kept in crates has a **Crates** button on its line (and beside New qty in Per Batch). The window lists the open crates at the site and the loose stock; type the new weight (or the difference) of each crate that changed. The line's quantity is the total. A crate can go down to 0 (Used up) or back up to what it came in with; the system never spreads a lump adjustment over the crates by itself, and lowering crated stock without naming crates is limited to the loose stock. Set Qty to Zero, shortages charged to a person, edits and voids work crate by crate.
 - **Crate Center:** the crates by item and site (count, kilos, average per crate, earliest expiry) and every crate with how full it is, filtered by site, item, status, expiry window and crate number; each crate has a sheet with its full history.
-- **Agreement with the books:** a site's open crates never hold more than its stock on hand. Adjustments, counts, builds and processing orders that take stock without naming crates take it from the oldest-expiring crates automatically. Edits, voids and deletes put the kilos back into their crates.
+- **Agreement with the books:** a site's open crates never hold more than its stock on hand. Physical counts, builds and processing orders that take stock without naming crates take it from the oldest-expiring crates automatically (Adjust Quantity/Value on Hand names its crates). Edits, voids and deletes put the kilos back into their crates.
 - **Reports** (Inventory → Reports → Crate Reports): Crates Remaining by Item (with the loose kilos if wanted), Kilos per Crate by Item, Crates Sold with Production and Expiry Dates, Crate Movement History, Crates Received by Supplier.
 - **Home:** open crates in storage with the number expiring within three days, and Today's pick-ups.
 
+### Van stores, outlets and shortages (Inventory)
+
+- **Inventory Transfer Closing:** the van salesman remits his sales and brings back what is left. Choose the van store or outlet (From), the warehouse or cold storage (To) and the date; every item it still holds is listed with its balance, one line per crate and one for the loose stock. Type what came back in **Transfer Qty/Wgt** (re-weighed crates, kilos, packs or any unit of the item). Each difference is **shrinkage**, a **shortage**, or part of each: a crate that came back lighter goes to shrinkage, anything missing to shortage, and both can be changed. Fields: Shrinkage Adjustment GL Account, Shortage Receivable GL Account, the cashier, sales rep or customer charged, Transferred by, Checked by, Received by. Saving enters the transfer back (crates whole), an adjustment for the shrinkage (to the adjustment account, at average cost) and a **Shortage Charge** for the shortage. Buttons: New closing, Reset, Save, Save & New, Close; a closing is voided as a whole.
+- **Shortage Charges:** a shortage is a receivable of the employee **as a customer**, at cost, on account 1120 Shortage Receivable - Employees. It is not a sale (no sales, VAT or cost of goods sold). The page lists every charge with what each person still owes; **Receive Payments** collects them and shows the sales representative's name.
+- **Sales representatives:** the Sales Rep list has a Kind (Sales representative, Van salesman, Cashier). Each person is also a customer of type Employee, made by the system. The sales rep box of the customer form, the closing and the adjustment has **Add new sales representative**, so the form is never left. A site can name the van salesman or cashier answerable for it.
+- **Adjust Quantity/Value on Hand:** **Display Inventory Balances** lists every item of the site that is above or below zero (items at zero are left out); remove the lines not adjusted. **Shortage charged to** puts the decreases on a Shortage Charge for the cashier or sales rep instead of the adjustment account.
+- **Reports** (Inventory → Reports → Shortage and Shrinkage Reports): Inventory Transfer Closing Register, Shortages by Item, by Site and by Sales Representative, Shortage Detail, Shrinkage by Item, Shrinkage Detail.
+
 The User's Manual (Help button on every page) has a chapter on all of this: **8. Distribution and Crates**.
+
+### Updating from the previous version
+
+The crate-by-crate adjustment and the POS receipt need **no database change**: copy the new program files over the old ones. Installations of the first version still need the update below.
+
+### Updating an installation of the first version
+
+The database of a Distribution System already in use needs one update, `database/migrations/2027_03_08_van_closing_shortages.sql`. It adds the closing tables, the van salesman and cashier kinds, account 1120, the Employee customer type, the number series TC- and SHC-, the new pages with their access, and keeps every record. It is written for MySQL 5.5 and can be run twice safely.
+
+1. Back up every company database (System Administration → Backup & Restore, or phpMyAdmin Export).
+2. Copy the new program files over the old ones.
+3. Log in as `superadmin` and open **Database updates**: press **Update all companies** (or update one company). Without the platform, import the file into the company database in phpMyAdmin (Import) instead. Until it is run, the program shows a page saying the update is needed and nothing can be changed.
 
 ## 7. The accounting base
 
@@ -125,7 +148,16 @@ Everything in G-SMaRT Accounting is included and unchanged in its logic:
 
 The look is built around a cold-chain warehouse: a freezer-navy menu rail, frost-white work surfaces, cold blue actions and crate yellow as the one accent, with a weighing-scale readout wherever kilos add up. The type is Barlow (Barlow Semi Condensed for titles) with Share Tech Mono only for scale figures and crate numbers. Buttons press in; the log-in page stacks crates onto a scale. Motion is limited to page arrival, the navigation progress bar, window openings and the scale count, and it switches off when the device asks for reduced motion. Every page works on a phone: the menu becomes a panel, wide tables scroll inside their own box, and the pick-up page turns each item into a block.
 
-Styles: `assets/css/app.css` (layout and components) and `assets/css/theme.css` (the theme). Scripts: `assets/js/app.js`, `assets/js/theme.js`, `assets/js/crates.js` (the crate window).
+Styles: `assets/css/app.css` (layout and components) and `assets/css/theme.css` (the theme). Scripts: `assets/js/app.js`, `assets/js/theme.js`, `assets/js/crates.js` (the crate window), `assets/js/pwa.js` (installing the app). The stylesheets and scripts are addressed with `?v=<release>.<file date>`; raise `ASSET_RELEASE` in `app/helpers.php` to make every browser load them again.
+
+### Installing it as an app
+
+The system installs as an app (a PWA) on phones, tablets and computers: an icon that opens it in its own window, without the browser's address bar. No app store and nothing to build.
+
+- **Install app** in the top bar and **Install the app** on the log-in page. Chrome, Edge and Android open their own install window; where the browser does not offer one, the button shows the steps for that browser (iPhone and iPad: **Share > Add to Home Screen**). Both are hidden inside the installed app.
+- **It needs https.** Browsers install apps, and run the app's service worker, only from an `https://` address or from `localhost` on the server itself. Opened as `http://192.168.x.x/gsmart-distribution/` on an office network, the system works as before but cannot be installed; the button then says so. Give the server an https address (a certificate) for phones and other computers.
+- **Nothing private is stored on the device.** Pages are never cached: every page comes from the server. Only `assets/` is cached (stylesheets, scripts, fonts, icons), so the app opens quickly. With no connection, `offline.html` says so with a **Try again** button. Saves, log-ins, uploads and downloads are never touched.
+- **Files:** `manifest.php` (name, colors, icons; the name is the one in `config/config.php`), `sw.js` (the service worker), `offline.html`, `assets/icons/` (the app's initials on the menu-rail navy), `assets/js/pwa.js`, `app/Pwa.php`. Change `VERSION` in `sw.js` whenever `offline.html` changes. Nothing is added to the database.
 
 ## 9. Configuration and maintenance
 
@@ -150,7 +182,7 @@ location ~ \.php$ { include fastcgi_params; fastcgi_param SCRIPT_FILENAME $docum
 
 Both .sql files and `database/schema.sql` follow the MySQL 5.5 rules: at most one `TIMESTAMP ... DEFAULT CURRENT_TIMESTAMP` per table, no JSON columns, no generated columns or fractional seconds, and every indexed text column within 767 bytes in utf8mb4. Automatic "created" dates are `TIMESTAMP` (up to 2038-01-19); business dates are `DATE`. Tested by importing both files on MariaDB and checking every page.
 
-`database/migrations/` holds the upgrade scripts of the accounting base, for an existing G-SMaRT Accounting database. A new Distribution System installation is made from the .sql files (or `tools/install.php`) and needs none of them.
+`database/migrations/` holds the upgrade scripts of the accounting base and `2027_03_08_van_closing_shortages.sql` for a Distribution System database of the first version (section 6). A new installation is made from the .sql files (or `tools/install.php`) and needs none of them.
 
 ## 12. Folder structure
 
@@ -159,11 +191,12 @@ index.php, login.php      entry points (index.php?p=<page key>)
 register.php              joining a company with the Company Code
 platform.php              the Super Admin pages
 manual.php                the User's Manual (views/manual/, assets/manual/)
+manifest.php, sw.js       the installable app (offline.html, assets/icons/, assets/js/pwa.js)
 sign.php                  signing a voucher from a link
 app/                      core classes: DB, Auth, Access, Txn, Posting, Stock, Crates, Allocations, Report, Tenant ...
 app/registry.php          every page (menus and Page Access Configuration)
-app/reports/              report definitions (distribution.php holds the crate and allocation reports)
-modules/                  pages, one folder per module (vendors/allocations.php, vendors/pickup.php, inventory/crates.php ...)
+app/reports/              report definitions (distribution.php: crates and allocations; variances.php: shortages and shrinkage)
+modules/                  pages, one folder per module (vendors/pickup.php, inventory/crates.php, inventory/transfer_closing.php ...)
 views/                    page layouts
 assets/                   CSS, JavaScript, fonts, Bootstrap and icons (all local)
 config/config.php         database and app settings
@@ -180,5 +213,3 @@ storage/                  uploads, backups, keys and the multi-company switch (n
 - Add your suppliers, their **Supplier Items**, and your items with a crate U/M set where stock comes in crates.
 - Create a MySQL user for the system instead of `root`, with the rights in section 5, and put it in `config/config.php`.
 - Use HTTPS and keep `APP_DEBUG` off.
-#   d i s t r i b u t i o n  
- 

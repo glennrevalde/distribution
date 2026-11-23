@@ -31,9 +31,8 @@ $weights = [12.45, 12.34, 12.56, 12.54];
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" type="image/svg+xml" href="<?= h(asset('img/favicon.svg')) ?>">
+<?= Pwa::head() ?>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0f2a3d">
 <title>Log in - <?= h($app) ?></title>
 <link rel="stylesheet" href="<?= h(vendor_asset('bootstrap.css')) ?>">
 <link rel="stylesheet" href="<?= h(vendor_asset('icons.css')) ?>">
@@ -95,6 +94,7 @@ $weights = [12.45, 12.34, 12.56, 12.54];
       <?php if ($multi): ?>
       <div class="login-join mt-3">New employee? <a href="<?= h(base_url() . '/register.php') ?>">Join your company with its Company Code</a></div>
       <?php endif; ?>
+      <?= Pwa::loginBox() ?>
       <div class="login-foot"><span>Every log-in, failed attempt and action is recorded in the audit trail.</span>
         <?php if (Manual::available()): ?><a href="<?= h(Manual::forPage('login')) ?>" target="_blank" rel="noopener"><i class="bi bi-book"></i> User's Manual</a><?php endif; ?></div>
     </div>

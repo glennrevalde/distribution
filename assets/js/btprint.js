@@ -1,6 +1,7 @@
 /* ---------------------------------------------------------------------------
    Printing a receipt on a Bluetooth roll printer (Officom OC-PT210 and the other
-   58 mm / 80 mm pocket printers that speak ESC/POS).
+   58 mm / 80 mm pocket printers that speak ESC/POS). v3: also the Inventory Transfer slip,
+   whose rows are columns with the crate number in bold (op 'row').
 
    The browser talks to the printer directly with Web Bluetooth, so nothing has to be
    installed on the phone or the till. That does put two conditions on the browser:
@@ -176,6 +177,25 @@ window.BtPrint = (function () {
           setAlign(0); setWide(0); setBold(o.bold ? 1 : 0);
           text(pad(o.left, o.right, width));
           break;
+        case 'row': {
+          // v3: columns of set widths on one line, each bold or not (the crate number of a transfer slip is bold)
+          setAlign(0); setWide(0);
+          const cells = o.cells || [];
+          cells.forEach((c, i) => {
+            let t = String(c.t === undefined || c.t === null ? '' : c.t);
+            const w = c.w || 0;
+            const last = i === cells.length - 1;
+            if (w > 0) {
+              const room = last || c.a === 'r' ? w : w - 1;      // a space after every column but the last
+              if (t.length > room) t = c.a === 'r' ? t.slice(-room) : t.slice(0, room);
+              t = c.a === 'r' ? t.padStart(w) : t.padEnd(w);
+            }
+            setBold(c.b ? 1 : 0);
+            encode(t).forEach((x) => b.push(x));
+          });
+          b.push(LF);
+          break;
+        }
         case 'feed':
           setAlign(0); setBold(0); setWide(0);
           for (let i = 0; i < (o.n || 1); i++) { b.push(LF); }

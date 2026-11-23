@@ -676,6 +676,107 @@ function load_demo_data(): void
             'memo' => 'Expired fresh chilled stock condemned (city meat inspector present)', 'status' => 'open'], $rows, null, ['reason' => 'Spoilage']);
     }
 
+    // ---------------------------------------------------------------- van stores (v2): loaded in the morning, selling on the road,
+    // closed in the evening: what comes back goes to the cold storage, shrinkage is adjusted, shortages are charged to the salesman
+    if (TransferClosing::ready() && SalesReps::ready()) {
+        Auth::actAs($admin);
+        $van1 = $site('VAN1');
+        $van2 = $site('VAN2');
+        $repId = fn(string $n) => (int)DB::value('SELECT id FROM sales_reps WHERE name = :n', ['n' => $n]);
+        $rico = $repId('Rico Mendoza');
+        $arnel = $repId('Arnel Cruz');
+        $walkin = $cust('Walk-in Customer');
+        $loose = fn(string $date, int $to, array $what, string $memo) => Txn::save('inventory_transfer', ['txn_date' => $date, 'site_id' => $nga, 'site2_id' => $to, 'status' => 'open', 'memo' => $memo],
+            array_map(fn($w) => ['line_kind' => 'item', 'item_id' => $item($w[0]), 'qty' => $w[1], 'description' => (string)DB::value('SELECT name FROM items WHERE code = :c', ['c' => $w[0]]), 'site_id' => $nga], $what));
+        $vanSale = function (string $date, int $siteId, int $rep, int $customer, array $rows, string $memo) use ($sales, $acct, $pm) {
+            return Txn::save('sales_receipt', ['txn_date' => $date, 'customer_id' => $customer, 'account_id' => $acct('1050'), 'payment_method_id' => $pm('Cash'),
+                'site_id' => $siteId, 'sales_rep_id' => $rep, 'memo' => $memo], $sales($rows, $customer, $siteId));
+        };
+        /** the closing as the receiver types it: everything back unless $diff says otherwise (key = item code or "code#n" for the n-th crate) */
+        $close = function (string $date, int $van, int $rep, array $diff, array $people, string $memo) use ($nga, $user) {
+            Auth::actAs($user('invclerk'));
+            $rows = [];
+            $crateN = [];
+            foreach (TransferClosing::balances($van) as $b) {
+                $code = (string)$b['code'];
+                $key = $code;
+                if ($b['crate_id']) {
+                    $crateN[$code] = ($crateN[$code] ?? 0) + 1;
+                    $key = $code . '#' . $crateN[$code];
+                }
+                $bal = (float)$b['balance'];
+                [$back, $shrink, $short] = [$bal, 0.0, 0.0];
+                if (isset($diff[$key])) {
+                    [$kind, $q] = $diff[$key];
+                    $q = $q === 'all' ? $bal : min($bal, (float)$q);
+                    $back = round($bal - $q, 4);
+                    if ($kind === 'shrink') {
+                        $shrink = $q;
+                    } else {
+                        $short = $q;
+                    }
+                }
+                $rows[] = ['item_id' => $b['item_id'], 'crate_id' => $b['crate_id'], 'balance' => $bal, 'transfer' => $back, 'shrink' => $shrink, 'shortage' => $short, 'use' => 1,
+                    'note' => isset($diff[$key]) ? ($diff[$key][2] ?? '') : ''];
+            }
+            $id = TransferClosing::save(['closing_date' => $date, 'from_site_id' => $van, 'to_site_id' => $nga, 'sales_rep_id' => $rep, 'customer_id' => SalesReps::ensureCustomer($rep),
+                'shrink_account_id' => Accts::get('inventory_adjustment'), 'shortage_account_id' => Accts::get('shortage_receivable'),
+                'transferred_by' => $people[0], 'checked_by' => $people[1], 'received_by' => $people[2], 'memo' => $memo], $rows);
+            Auth::actAs($user('admin'));
+            return $id;
+        };
+
+        // Van Store 1, four days ago: Rico Mendoza takes crates of whole chicken, drumsticks and bola-bola, and some blood
+        $move($d(4), $nga, $van1, [['WCK-FC', 3], ['DRM-FZ', 1], ['BLB-250', 1]], 'Van Store 1 load-out (Rico Mendoza)');
+        $loose($d(4), $van1, [['BLD', 6]], 'Van Store 1 load-out: chicken blood');
+        $vanSale($d(4), $van1, $rico, $tess, [$crateLine('WCK-FC', $van1, 1), $kgLine('DRM-FZ', $van1, 4.5)], 'Van sale, Naga public market');
+        $vanSale($d(4), $van1, $rico, $walkin, [$kgLine('WCK-FC', $van1, 3.2), $line('BLD', 2), $kgLine('BLB-250', $van1, 6)], 'Van sale, Barangay Concepcion');
+        // in the evening: one crate of chicken dried out a little, two packs of bola-bola and half a kilo of blood are missing
+        $c1 = $close($d(4), $van1, $rico, ['WCK-FC#1' => ['shrink', 0.18, 'Drip loss'], 'BLB-250#1' => ['shortage', 2, 'Two packs not accounted for'], 'BLD' => ['shortage', 0.5]],
+            ['Rico Mendoza', 'Fred Tan', 'Dan Villanueva'], 'Evening closing, Naga route');
+        // Rico pays part of the shortage the next day
+        $sc1 = (int)DB::value('SELECT shortage_txn_id FROM transfer_closings WHERE id = :c', ['c' => $c1]);
+        if ($sc1) {
+            $t1 = Txn::load($sc1);
+            $half = r2((float)$t1['total'] / 2);
+            $pay((int)$t1['customer_id'], $d(3), $half, [['target_txn_id' => $sc1, 'amount' => $half, 'discount' => 0, 'withholding' => 0]],
+                ['payment_method_id' => $pm('Cash'), 'memo' => 'Shortage on ' . DB::value('SELECT closing_no FROM transfer_closings WHERE id = :c', ['c' => $c1]) . ', first half']);
+        }
+
+        // Van Store 2, three days ago: Arnel Cruz, the Pili route; a crate of chicken did not come back
+        $move($d(3), $nga, $van2, [['WCK-FC', 2], ['BRS-FZ', 1]], 'Van Store 2 load-out (Arnel Cruz)');
+        $vanSale($d(3), $van2, $arnel, $walkin, [$kgLine('BRS-FZ', $van2, 5.0), $kgLine('WCK-FC', $van2, 2.4)], 'Van sale, Pili town proper');
+        $close($d(3), $van2, $arnel, ['WCK-FC#2' => ['shortage', 'all', 'Crate not returned'], 'BRS-FZ#1' => ['shrink', 0.12]],
+            ['Arnel Cruz', 'Fred Tan', 'Dan Villanueva'], 'Evening closing, Pili route');
+
+        // Van Store 1 yesterday: everything back but the weight of one crate
+        $move($d(1), $nga, $van1, [['WCK-FC', 2], ['BBD-FC', 1]], 'Van Store 1 load-out (Rico Mendoza)');
+        $vanSale($d(1), $van1, $rico, $walkin, [$kgLine('WCK-FC', $van1, 4.8)], 'Van sale, Barangay Triangulo');
+        $close($d(1), $van1, $rico, ['BBD-FC#1' => ['shrink', 0.1]], ['Rico Mendoza', 'Fred Tan', 'Dan Villanueva'], 'Evening closing, Naga route');
+
+        // today: Van Store 1 is out again (close it with Inventory Transfer Closing tonight)
+        $move($d(0), $nga, $van1, [['WCK-FC', 2], ['DRM-FZ', 1]], 'Van Store 1 load-out (Rico Mendoza)');
+        $loose($d(0), $van1, [['BLD', 4]], 'Van Store 1 load-out: chicken blood');
+
+        // the outlet's cashier: two kilos of cut-ups short at the counter count, charged to her (Adjust Quantity/Value on Hand)
+        $ella = $repId('Ella Ramos');
+        $acu = $item('ACU-FZ');
+        if ($ella && Stock::bookQty($acu, $not) > 2) {
+            $uc = TransferClosing::unitCost($acu);
+            Txn::save('shortage_charge', ['txn_date' => $d(2), 'due_date' => $d(2), 'site_id' => $not, 'customer_id' => SalesReps::ensureCustomer($ella), 'sales_rep_id' => $ella,
+                'account_id' => Accts::get('shortage_receivable'), 'memo' => 'Shortage - counter count', 'status' => 'open'], [
+                ['line_kind' => 'item', 'item_id' => $acu, 'qty' => 2, 'rate' => $uc, 'uom_rate' => $uc, 'amount' => r2(2 * $uc), 'site_id' => $not, 'unit' => 'kg',
+                    'description' => 'Chicken Assorted Cut-Ups, Frozen, Bag (shortage: counter count)'],
+            ], null, ['reason' => 'Shortage charged to Ella Ramos (counter count)']);
+        }
+        // shrinkage found at the cold storage count (Adjust Quantity/Value on Hand, reason Shrinkage)
+        if (Stock::bookQty($item('BLD'), $nga) > 2) {
+            Txn::save('inventory_adjustment', ['txn_date' => $d(2), 'site_id' => $nga, 'account_id' => Accts::get('inventory_adjustment'), 'memo' => 'Shrinkage - weekly count', 'status' => 'open'], [
+                ['line_kind' => 'item', 'item_id' => $item('BLD'), 'qty' => -1.35, 'rate' => 0, 'value_change' => 0, 'site_id' => $nga, 'description' => 'Shrinkage'],
+            ], null, ['reason' => 'Shrinkage']);
+        }
+    }
+
     // ---------------------------------------------------------------- security examples
     $salesrep = $user('salesrep');
     $arclerk = $user('arclerk');

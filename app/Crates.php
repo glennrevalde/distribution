@@ -17,9 +17,11 @@ declare(strict_types=1);
  *  - Stock received in crates is sold by the crate: kilos sold without a crate can only come from loose stock
  *    (stock received in kilos, or crates converted to kilos). Converting a crate to kilos stops following it.
  *  - Moving crates to another site moves the crate with the stock (an inventory transfer is recorded).
- *  - Anything else that takes stock out without naming a crate (adjustments, builds, processing, supplier returns,
- *    batch invoices) takes loose stock first, then the oldest crates, so the crates never add up to more than
- *    what is on hand. Those are kept as "taken automatically" in each crate's history.
+ *  - v3: Adjust Quantity/Value on Hand adjusts crate by crate: the user types each crate's new weight (and the loose
+ *    stock's), so the crates keep their own weights. An adjustment that names no crate may only change loose stock.
+ *  - Anything else that takes stock out without naming a crate (builds, processing, supplier returns, batch invoices,
+ *    counts) takes loose stock first, then the oldest crates, so the crates never add up to more than what is on
+ *    hand. Those are kept as "taken automatically" in each crate's history.
  *
  * Every change is tied to the transaction that made it, so editing, voiding or deleting a transaction puts its
  * crates back exactly as they were.
@@ -31,6 +33,31 @@ final class Crates
     /** transaction types whose lines may bring crates in, and types whose lines may take crates out */
     public const IN_TYPES = ['item_receipt', 'bill', 'check'];
     public const OUT_TYPES = ['invoice', 'sales_receipt', 'pos_sale'];
+
+    /**
+     * v2: what a crate chosen on a line is recorded as: sold (sales), shrinkage (an inventory adjustment, as the
+     * shrinkage of an Inventory Transfer Closing) or shortage (a shortage charged to an employee).
+     */
+    public const OUT_KINDS = ['inventory_adjustment' => 'shrink', 'shortage_charge' => 'shortage'];
+    /**
+     * the movements that take kilos out of a crate, and the ones a document chose itself (line by line).
+     * v3: 'adjust' is a crate adjusted on Adjust Quantity/Value on Hand: its qty is what the adjustment took out of the
+     * crate, negative when it put kilos back in (never above what the crate came in with).
+     */
+    public const TAKE_KINDS = ['sale', 'auto', 'shrink', 'shortage', 'adjust'];
+    public const CHOSEN_KINDS = ['sale', 'transfer', 'shrink', 'shortage', 'adjust'];
+
+    /** "'sale','auto',..." for an SQL IN list */
+    private static function sqlKinds(array $kinds): string
+    {
+        return "'" . implode("','", $kinds) . "'";
+    }
+
+    /** The movement kind of crates chosen on a document of this type */
+    public static function outKind(string $txnType): string
+    {
+        return self::OUT_KINDS[$txnType] ?? 'sale';
+    }
 
     private static array $ready = [];
     private static array $unitCache = [];
@@ -179,7 +206,7 @@ final class Crates
     public static function takenBy(int $txnId): array
     {
         $out = [];
-        foreach (DB::all("SELECT crate_id, SUM(qty) AS q FROM crate_movements WHERE txn_id = :t AND kind IN ('sale','auto') GROUP BY crate_id", ['t' => $txnId]) as $r) {
+        foreach (DB::all('SELECT crate_id, SUM(qty) AS q FROM crate_movements WHERE txn_id = :t AND kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ') GROUP BY crate_id', ['t' => $txnId]) as $r) {
             $out[(int)$r['crate_id']] = (float)$r['q'];
         }
         return $out;
@@ -195,6 +222,102 @@ final class Crates
     public static function loose(int $itemId, int $siteId): float
     {
         return round(Stock::bookQty($itemId, $siteId) - self::inCrates($itemId, $siteId), 4);
+    }
+
+    /**
+     * v3: loose stock as a document sees it: with $txnId, what that document did to the stock and to the crates is
+     * counted back in (it is being edited, and may already be off the books).
+     */
+    public static function looseFor(int $itemId, int $siteId, ?int $txnId): float
+    {
+        if (!$txnId) {
+            return self::loose($itemId, $siteId);
+        }
+        $own = -(float)DB::value('SELECT COALESCE(SUM(qty),0) FROM inventory_movements WHERE txn_id = :t AND item_id = :i AND site_id = :s', ['t' => $txnId, 'i' => $itemId, 's' => $siteId]);
+        $ownCrates = (float)DB::value('SELECT COALESCE(SUM(m.qty),0) FROM crate_movements m JOIN crates c ON c.id = m.crate_id
+                                        WHERE m.txn_id = :t AND m.kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ') AND c.item_id = :i AND c.site_id = :s',
+            ['t' => $txnId, 'i' => $itemId, 's' => $siteId]);
+        return round(Stock::bookQty($itemId, $siteId) + $own - (self::inCrates($itemId, $siteId) + $ownCrates), 4);
+    }
+
+    /** v3: the open crates of each crate item, by site: item id => [site id => number of open crates] */
+    public static function openCounts(): array
+    {
+        if (!self::ready()) {
+            return [];
+        }
+        $out = [];
+        foreach (DB::all("SELECT item_id, site_id, COUNT(*) AS n FROM crates WHERE status = 'open' GROUP BY item_id, site_id") as $r) {
+            $out[(int)$r['item_id']][(int)$r['site_id']] = (int)$r['n'];
+        }
+        return $out;
+    }
+
+    /**
+     * v3: the crates of a line of Adjust Quantity/Value on Hand ($row['crates'], JSON from the crate window): each crate's
+     * difference, [{id, qty (+ added, - taken out), no}], and the loose stock's difference, {id: 'loose', qty}.
+     * A crate can go down to 0, or up to what it came in with; loose stock can go down only as far as there is.
+     * Returns null when the line names no crate, else ['dir' => 'adjust', 'rows', 'qty' (crates), 'loose', 'total',
+     * 'count'] with the rows carrying the crates' dates.
+     */
+    public static function adjustRows(array $row, int $itemId, string $label, int $siteId, ?int $txnId): ?array
+    {
+        $raw = $row['crates'] ?? '';
+        $list = is_array($raw) ? $raw : (trim((string)$raw) !== '' ? json_decode((string)$raw, true) : null);
+        if (!is_array($list) || !$list) {
+            return null;
+        }
+        if (!self::crateUnit($itemId)) {
+            fail($label . ' is not kept in crates: its U/M set has no crate unit.');
+        }
+        $base = self::baseUnit($itemId);
+        $avail = [];
+        foreach (self::open($itemId, $siteId, $txnId) as $c) {
+            $avail[(int)$c['id']] = $c;
+        }
+        $rows = [];
+        $total = 0.0;
+        $loose = 0.0;
+        $seen = [];
+        foreach ($list as $c) {
+            $d = round(to_num($c['qty'] ?? 0), 4);
+            if (($c['id'] ?? '') === 'loose') {
+                $loose = $d;
+                continue;
+            }
+            $id = (int)($c['id'] ?? 0);
+            if (!$id || abs($d) <= self::EPS) {
+                continue;
+            }
+            if (isset($seen[$id])) {
+                fail('A crate is adjusted twice on ' . $label . '.');
+            }
+            $seen[$id] = 1;
+            $crate = $avail[$id] ?? null;
+            if (!$crate) {
+                $no = DB::value('SELECT crate_no FROM crates WHERE id = :id', ['id' => $id]);
+                fail('Crate ' . ($no ?: '#' . $id) . ' of ' . $label . ' is no longer open at this site. Open the crates of the line again.');
+            }
+            $left = (float)$crate['qty_left'];
+            if ($left + $d < -self::EPS) {
+                fail('Crate ' . $crate['crate_no'] . ' of ' . $label . ' has ' . self::fig($left, $base) . ' ' . $base . '; it cannot go down by ' . self::fig(-$d, $base) . '.');
+            }
+            if ($left + $d > (float)$crate['qty_in'] + self::EPS) {
+                fail('Crate ' . $crate['crate_no'] . ' of ' . $label . ' came in with ' . self::fig($crate['qty_in'], $base) . ' ' . $base . '; an adjustment can put it back up to that, not above it.');
+            }
+            $rows[] = ['id' => $id, 'qty' => $d, 'no' => $crate['crate_no'], 'left' => $left, 'prod' => $crate['production_date'], 'exp' => $crate['expiry_date']];
+            $total += $d;
+        }
+        if ($loose < -self::EPS) {
+            $have = max(0.0, self::looseFor($itemId, $siteId, $txnId));
+            if (-$loose > $have + self::EPS) {
+                fail($label . ' has ' . self::fig($have, $base) . ' ' . $base . ' of loose stock here (not in a crate); the loose stock cannot go down by ' . self::fig(-$loose, $base) . '. Lower the crates themselves instead.');
+            }
+        }
+        if (!$rows && abs($loose) <= self::EPS) {
+            return null;
+        }
+        return ['dir' => 'adjust', 'rows' => $rows, 'qty' => round($total, 4), 'loose' => round($loose, 4), 'total' => round($total + $loose, 4), 'count' => count($rows)];
     }
 
     /** The open crates of several items at a site, for the POS and the line grids: item id => [crate, ...] */
@@ -315,7 +438,7 @@ final class Crates
      * Kilos sold without a crate may only come from loose stock: stock received in crates is sold by the crate,
      * unless the crates are converted to kilos first. Checked once for all the lines of a sale.
      */
-    public static function checkLoose(array $lines, ?int $siteId, ?int $txnId): void
+    public static function checkLoose(array $lines, ?int $siteId, ?int $txnId, string $doing = 'sale'): void
     {
         if (!self::ready()) {
             return;
@@ -341,12 +464,22 @@ final class Crates
             // what this document already took counts back in (it is being edited)
             $own = $txnId ? -(float)DB::value('SELECT COALESCE(SUM(qty),0) FROM inventory_movements WHERE txn_id = :t AND item_id = :i AND site_id = :s', ['t' => $txnId, 'i' => $iid, 's' => $sid]) : 0.0;
             $ownCrates = $txnId ? (float)DB::value("SELECT COALESCE(SUM(m.qty),0) FROM crate_movements m JOIN crates c ON c.id = m.crate_id
-                                                     WHERE m.txn_id = :t AND m.kind IN ('sale','auto') AND c.item_id = :i AND c.site_id = :s", ['t' => $txnId, 'i' => $iid, 's' => $sid]) : 0.0;
+                                                     WHERE m.txn_id = :t AND m.kind IN (" . self::sqlKinds(self::TAKE_KINDS) . ") AND c.item_id = :i AND c.site_id = :s", ['t' => $txnId, 'i' => $iid, 's' => $sid]) : 0.0;
             $loose = round(Stock::bookQty($iid, $sid) + $own - (self::inCrates($iid, $sid) + $ownCrates), 4);
             if ($q > max(0.0, $loose) + self::EPS) {
                 $it = DB::row('SELECT code, name FROM items WHERE id = :i', ['i' => $iid]);
                 $site = (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => $sid]);
                 $unit = self::baseUnit($iid);
+                if ($doing === 'adjustment') {
+                    fail($it['code'] . ' ' . $it['name'] . ' is kept in crates at ' . $site . ': ' . qty(max(0.0, $loose)) . ' ' . $unit . ' of it is loose, and this adjustment lowers it by '
+                        . qty($q) . ' ' . $unit . ' without naming a crate. Press Crates on the line and type the new weight of each crate adjusted, '
+                        . 'so every crate keeps its own weight.');
+                }
+                if ($doing === 'transfer') {
+                    fail($it['code'] . ' ' . $it['name'] . ' is kept in crates at ' . $site . ': ' . qty(max(0.0, $loose)) . ' ' . $unit . ' of it is loose, and this transfer moves '
+                        . qty($q) . ' ' . $unit . ' without naming a crate. Press Crates on the line to move the crates themselves (they keep their numbers and dates), '
+                        . 'or convert crates to loose stock first (Inventory > Convert Crates to Kilos).');
+                }
                 fail($it['code'] . ' ' . $it['name'] . ' is kept in crates at ' . $site . ': ' . qty(max(0.0, $loose)) . ' ' . $unit . ' of it is loose, and this sale takes '
                     . qty($q) . ' ' . $unit . ' without naming a crate. Press Crates on the line to choose the crate it comes from, sell it by the crate, '
                     . 'or convert crates to loose stock first (Inventory > Convert Crates to Kilos).');
@@ -384,7 +517,7 @@ final class Crates
         DB::run("DELETE FROM crate_movements WHERE txn_id = :t AND kind = 'auto'", ['t' => $txnId]);
 
         // lines taken off the document: their crates go back (sold) or away (received)
-        foreach (DB::all("SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND kind IN ('sale','transfer')", ['t' => $txnId]) as $m) {
+        foreach (DB::all('SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND kind IN (' . self::sqlKinds(self::CHOSEN_KINDS) . ')', ['t' => $txnId]) as $m) {
             if (!isset($lines[(int)$m['line_id']])) {
                 self::undoMovement($m, $touched, $pairs);
             }
@@ -405,7 +538,7 @@ final class Crates
             $site = (int)($line['site_id'] ?: $t['site_id']);
             $dir = $data['dir'] ?? null;
             // the line's previous crates
-            foreach (DB::all("SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND line_id = :l AND kind IN ('sale','transfer')", ['t' => $txnId, 'l' => $lineId]) as $m) {
+            foreach (DB::all('SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND line_id = :l AND kind IN (' . self::sqlKinds(self::CHOSEN_KINDS) . ')', ['t' => $txnId, 'l' => $lineId]) as $m) {
                 self::undoMovement($m, $touched, $pairs);
             }
             if ($dir !== 'in') {
@@ -427,8 +560,27 @@ final class Crates
                         fail('Crate ' . ($crate['crate_no'] ?? '#' . $r['id']) . ' is not an open crate of this item at this site.');
                     }
                     DB::insert('crate_movements', [
-                        'crate_id' => (int)$r['id'], 'move_date' => $t['txn_date'], 'kind' => 'sale', 'txn_id' => $txnId, 'line_id' => (int)$lineId,
+                        'crate_id' => (int)$r['id'], 'move_date' => $t['txn_date'], 'kind' => self::outKind((string)$t['txn_type']), 'txn_id' => $txnId, 'line_id' => (int)$lineId,
                         'qty' => round((float)$r['qty'], 4), 'whole' => (int)($r['whole'] ?? 0), 'site_id' => $site, 'customer_id' => $t['customer_id'],
+                        'note' => isset($r['note']) && $r['note'] !== '' ? mb_substr((string)$r['note'], 0, 255) : null,
+                        'created_by' => Auth::id(),
+                    ]);
+                    $touched[(int)$r['id']] = 1;
+                    $count++;
+                }
+                $pairs[$line['item_id'] . ':' . $site] = 1;
+            } elseif ($dir === 'adjust' && !$voided) {
+                // v3: each crate's own adjustment (qty kept as what was taken out of it: negative when kilos were put back)
+                foreach ($data['rows'] as $r) {
+                    $crate = DB::row('SELECT * FROM crates WHERE id = :id', ['id' => $r['id']]);
+                    if (!$crate || (int)$crate['item_id'] !== (int)$line['item_id'] || (int)$crate['site_id'] !== $site || $crate['status'] === 'converted') {
+                        fail('Crate ' . ($crate['crate_no'] ?? '#' . $r['id']) . ' is not an open crate of this item at this site.');
+                    }
+                    $d = round((float)$r['qty'], 4);
+                    DB::insert('crate_movements', [
+                        'crate_id' => (int)$r['id'], 'move_date' => $t['txn_date'], 'kind' => 'adjust', 'txn_id' => $txnId, 'line_id' => (int)$lineId,
+                        'qty' => -$d, 'whole' => isset($r['left']) && $d < 0 && abs((float)$r['left'] + $d) <= self::EPS ? 1 : 0, 'site_id' => $site,
+                        'note' => mb_substr(trim((string)$line['description']) !== '' ? trim((string)$line['description']) : 'Adjusted', 0, 255),
                         'created_by' => Auth::id(),
                     ]);
                     $touched[(int)$r['id']] = 1;
@@ -458,7 +610,7 @@ final class Crates
 
         // a sale that was voided, suspended or left pending holds no crate
         if ($voided) {
-            foreach (DB::all("SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND kind IN ('sale','transfer')", ['t' => $txnId]) as $m) {
+            foreach (DB::all('SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND kind IN (' . self::sqlKinds(self::CHOSEN_KINDS) . ')', ['t' => $txnId]) as $m) {
                 self::undoMovement($m, $touched, $pairs);
             }
         }
@@ -470,10 +622,13 @@ final class Crates
         foreach (array_keys($touched) as $cid) {
             self::recompute((int)$cid);
             // the same crate chosen on two lines of the document can not give more than it holds
-            $over = DB::row("SELECT c.crate_no, c.qty_in, SUM(m.qty) AS q FROM crates c JOIN crate_movements m ON m.crate_id = c.id AND m.kind IN ('sale','auto')
-                              WHERE c.id = :c GROUP BY c.id, c.crate_no, c.qty_in", ['c' => $cid]);
+            $over = DB::row('SELECT c.crate_no, c.qty_in, SUM(m.qty) AS q FROM crates c JOIN crate_movements m ON m.crate_id = c.id AND m.kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ')
+                              WHERE c.id = :c GROUP BY c.id, c.crate_no, c.qty_in', ['c' => $cid]);
             if ($over && (float)$over['q'] > (float)$over['qty_in'] + self::EPS) {
                 fail('Crate ' . $over['crate_no'] . ' holds ' . qty($over['qty_in']) . ' in all; more than that is being taken from it. Check the crates chosen on each line.');
+            }
+            if ($over && (float)$over['q'] < -self::EPS) {
+                fail('Crate ' . $over['crate_no'] . ' came in with ' . qty($over['qty_in']) . '; an adjustment cannot put more than that back in it.');
             }
         }
         foreach (array_keys($pairs) as $key) {
@@ -495,7 +650,7 @@ final class Crates
         }
         $touched = [];
         $pairs = [];
-        foreach (DB::all("SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND kind IN ('sale','transfer','auto')", ['t' => $txnId]) as $m) {
+        foreach (DB::all('SELECT id, crate_id, line_id FROM crate_movements WHERE txn_id = :t AND kind IN (' . self::sqlKinds(array_merge(self::CHOSEN_KINDS, ['auto'])) . ')', ['t' => $txnId]) as $m) {
             self::undoMovement($m, $touched, $pairs);
         }
         foreach (DB::all('SELECT * FROM crates WHERE receive_txn_id = :t', ['t' => $txnId]) as $c) {
@@ -526,7 +681,7 @@ final class Crates
         }
         if ($mv['kind'] === 'transfer') {
             // the crate goes back to the site it came from, unless it has moved on since
-            $later = DB::value("SELECT 1 FROM crate_movements WHERE crate_id = :c AND id > :id AND kind IN ('transfer','sale') AND (txn_id IS NULL OR txn_id <> :t) LIMIT 1",
+            $later = DB::value('SELECT 1 FROM crate_movements WHERE crate_id = :c AND id > :id AND kind IN (' . self::sqlKinds(self::CHOSEN_KINDS) . ') AND (txn_id IS NULL OR txn_id <> :t) LIMIT 1',
                 ['c' => $mv['crate_id'], 'id' => $mv['id'], 't' => (int)$mv['txn_id']]);
             if ($later) {
                 fail('Crate ' . DB::value('SELECT crate_no FROM crates WHERE id = :c', ['c' => $mv['crate_id']]) . ' was moved here and has been sold or moved again since. Undo that first.');
@@ -555,7 +710,7 @@ final class Crates
             $id = $r['id'] && isset($existing[$r['id']]) ? (int)$r['id'] : null;
             if ($id) {
                 $c = $existing[$id];
-                $out = round((float)DB::value("SELECT COALESCE(SUM(qty),0) FROM crate_movements WHERE crate_id = :c AND kind IN ('sale','auto')", ['c' => $id]), 4);
+                $out = round((float)DB::value('SELECT COALESCE(SUM(qty),0) FROM crate_movements WHERE crate_id = :c AND kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ')', ['c' => $id]), 4);
                 if ($out > 0 && (float)$r['qty'] + self::EPS < $out) {
                     fail('Crate ' . $c['crate_no'] . ' already had ' . qty($out) . ' ' . self::baseUnit((int)$line['item_id']) . ' sold from it; it cannot hold less than that.');
                 }
@@ -609,11 +764,11 @@ final class Crates
     /** A crate received by a document that no longer has it: refused once another document took from it */
     private static function removeReceived(array $c, array &$pairs): void
     {
-        $used = DB::row("SELECT m.txn_id, m.kind FROM crate_movements m WHERE m.crate_id = :c AND m.kind IN ('sale','transfer') AND (m.txn_id IS NULL OR m.txn_id <> :t) LIMIT 1",
+        $used = DB::row('SELECT m.txn_id, m.kind FROM crate_movements m WHERE m.crate_id = :c AND m.kind IN (' . self::sqlKinds(self::CHOSEN_KINDS) . ') AND (m.txn_id IS NULL OR m.txn_id <> :t) LIMIT 1',
             ['c' => $c['id'], 't' => (int)$c['receive_txn_id']]);
         if ($used) {
             $ref = $used['txn_id'] ? Txn::ref(Txn::load((int)$used['txn_id']) ?? ['txn_type' => 'transaction', 'txn_no' => '#' . $used['txn_id']]) : 'another document';
-            fail('Crate ' . $c['crate_no'] . ' received on this document was already ' . ($used['kind'] === 'transfer' ? 'moved' : 'sold') . ' on ' . $ref . '. Void or change that document first.');
+            fail('Crate ' . $c['crate_no'] . ' received on this document was already ' . (['transfer' => 'moved', 'shrink' => 'adjusted for shrinkage', 'shortage' => 'charged as a shortage', 'adjust' => 'adjusted'][$used['kind']] ?? 'sold') . ' on ' . $ref . '. Void or change that document first.');
         }
         $pairs[$c['item_id'] . ':' . $c['site_id']] = 1;
         DB::run('DELETE FROM crates WHERE id = :id', ['id' => $c['id']]);   // its movements go with it
@@ -627,9 +782,15 @@ final class Crates
         if (!$c) {
             return;
         }
-        $out = (float)DB::value("SELECT COALESCE(SUM(qty),0) FROM crate_movements WHERE crate_id = :c AND kind IN ('sale','auto')", ['c' => $crateId]);
+        $out = (float)DB::value('SELECT COALESCE(SUM(qty),0) FROM crate_movements WHERE crate_id = :c AND kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ')', ['c' => $crateId]);
         $left = round(max(0.0, (float)$c['qty_in'] - $out), 4);
-        $status = $c['status'] === 'converted' ? 'converted' : ($left <= self::EPS ? 'sold' : 'open');
+        // emptied: sold out, unless what finished it was shrinkage or a shortage (used up)
+        $emptied = 'sold';
+        if ($left <= self::EPS && in_array((string)DB::value('SELECT kind FROM crate_movements WHERE crate_id = :c AND kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ') ORDER BY id DESC LIMIT 1',
+            ['c' => $crateId]), ['shrink', 'shortage', 'adjust'], true)) {
+            $emptied = 'used';
+        }
+        $status = $c['status'] === 'converted' ? 'converted' : ($left <= self::EPS ? $emptied : 'open');
         DB::update('crates', ['qty_left' => $left, 'status' => $status], 'id = :id', ['id' => $crateId]);
     }
 
@@ -703,9 +864,13 @@ final class Crates
             return [];
         }
         $out = [];
-        foreach (DB::all("SELECT m.line_id, m.qty, m.whole, m.kind, c.id AS crate_id, c.crate_no, c.pcs, c.qty_in, c.qty_left, c.production_date, c.expiry_date, c.status
+        // w_before: what the crate held just before this movement (a transfer shows the weight it went with, even
+        // after the crate was sold at the site it went to)
+        foreach (DB::all("SELECT m.line_id, m.qty, m.whole, m.kind, c.id AS crate_id, c.crate_no, c.pcs, c.qty_in, c.qty_left, c.production_date, c.expiry_date, c.status,
+                                 c.qty_in - COALESCE((SELECT SUM(x.qty) FROM crate_movements x WHERE x.crate_id = m.crate_id AND x.id < m.id
+                                                       AND x.kind IN (" . self::sqlKinds(self::TAKE_KINDS) . ")), 0) AS w_before
                             FROM crate_movements m JOIN crates c ON c.id = m.crate_id
-                           WHERE m.txn_id = :t AND m.kind IN ('receive','sale','transfer') ORDER BY m.line_id, m.id", ['t' => $txnId]) as $r) {
+                           WHERE m.txn_id = :t AND m.kind IN ('receive'," . self::sqlKinds(self::CHOSEN_KINDS) . ") ORDER BY m.line_id, m.id", ['t' => $txnId]) as $r) {
             $out[(int)$r['line_id']][] = $r;
         }
         return $out;
@@ -719,6 +884,8 @@ final class Crates
             if ($dir === 'in') {
                 $list[] = ['id' => (int)$r['crate_id'], 'no' => (string)$r['crate_no'], 'pcs' => (float)$r['pcs'], 'qty' => (float)$r['qty'],
                     'prod' => $r['production_date'] ?: '', 'exp' => $r['expiry_date'] ?: ''];
+            } elseif ($dir === 'adjust') {
+                $list[] = ['id' => (int)$r['crate_id'], 'qty' => round(-(float)$r['qty'], 4), 'no' => (string)$r['crate_no']];
             } else {
                 $list[] = ['id' => (int)$r['crate_id'], 'qty' => (float)$r['qty'], 'no' => (string)$r['crate_no']];
             }
@@ -742,13 +909,27 @@ final class Crates
         return qty(round((float)$v, 4));
     }
 
+    /** v3: what a movement did to the crate, signed: +12.87 received, -6.00 sold, +0.50 adjusted up, '' moved or converted */
+    public static function signedFig(array $m, ?string $base): string
+    {
+        $q = (float)$m['qty'];
+        if ($m['kind'] === 'receive') {
+            return '+' . self::fig($q, $base);
+        }
+        if (!in_array($m['kind'], self::TAKE_KINDS, true) || abs($q) <= self::EPS) {
+            return '';
+        }
+        return ($q < 0 ? '+' : '-') . self::fig(abs($q), $base);
+    }
+
     public static function statusText(string $status): string
     {
-        return ['open' => 'Open', 'sold' => 'Sold out', 'converted' => 'Converted to kilos'][$status] ?? ucfirst($status);
+        return ['open' => 'Open', 'sold' => 'Sold out', 'converted' => 'Converted to kilos', 'used' => 'Used up (adjusted, shrinkage or shortage)'][$status] ?? ucfirst($status);
     }
 
     public static function kindText(string $kind): string
     {
-        return ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos'][$kind] ?? ucfirst($kind);
+        return ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos',
+            'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted'][$kind] ?? ucfirst($kind);
     }
 }

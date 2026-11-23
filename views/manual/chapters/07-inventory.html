@@ -1119,6 +1119,7 @@
 <ol>
 <li>Open the transfer from the list.</li>
 <li>Click <strong>Print</strong> for the printout, which names the <strong>From site</strong> and the <strong>To site</strong> in its heading and lists the items and quantities with a <strong>Total quantity</strong> line and signature lines. Click <strong>Print</strong> again on the printout page to send it to the printer.</li>
+<li>Click <strong>Print POS Receipt</strong> for a slip on a POS or Bluetooth roll printer, or a PDF of it: crate by crate, with the item codes and the quantity and unit of each, and <strong>Transferred by</strong> and <strong>Received by</strong> lines. See <a href="manual.php?c=distribution#s-transfer-receipt">Printing the transfer for the van: the POS receipt</a>.</li>
 <li>To undo the transfer, click <strong>Void</strong>, type the reason and click <strong>Void transaction</strong>. The document stays, marked VOID, and the goods go back. <strong>Delete</strong> removes it; its full content stays in the audit trail.</li>
 </ol>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/inv_transfers__print.jpg" title="Click to enlarge"><img src="assets/manual/img/inv_transfers__print.jpg" alt="Printout of the transfer IT-00003" width="946" height="599" loading="lazy" decoding="async"></a><figcaption>Printout of the transfer IT-00003</figcaption></figure>
@@ -1233,6 +1234,10 @@
 <td>The unit the quantities are typed in, when the item has a U/M set (pieces, boxes, cases). The program converts to the base unit.</td>
 </tr>
 <tr>
+<td><strong>Crates</strong></td>
+<td>Items kept in crates: opens the crate window, where the new weight of each crate adjusted is typed. The line's quantity is then the total of the crates. See <a href="manual.php?c=distribution#s-adjust-crates">Adjusting stock crate by crate</a>.</td>
+</tr>
+<tr>
 <td><strong>Current value</strong></td>
 <td>Value types: the value of the item at all sites.</td>
 </tr>
@@ -1253,7 +1258,7 @@
 <p>The cross at the end of a line removes it; the square plus button beside it inserts an empty line above it. <strong>Add line</strong>, <strong>Add 5 lines</strong> and <strong>Add 10 lines</strong> add empty lines at the end.</p>
 <ul>
 <li><strong>Find &amp; Select Items...</strong> opens a list of every active inventory part and assembly with its quantity at the site. Type in the search box to narrow it, tick <strong>Only items in stock at the site</strong> if you want, tick the items (the box in the heading ticks every item shown) and click <strong>Add the selected items</strong>. Each one gets a line. Items already on a line cannot be ticked again.</li>
-<li><strong>Set Qty to Zero</strong> makes the <strong>New quantity</strong> of every line 0, for writing off everything on the lines.</li>
+<li><strong>Set Qty to Zero</strong> makes the <strong>New quantity</strong> of every line 0, for writing off everything on the lines. An item kept in crates goes to 0 crate by crate.</li>
 <li><strong>Categories</strong> with <strong>Add their items</strong> puts every active item of the ticked categories on the lines at once (the items already on a line are left as they are), to adjust whole categories. Click the <strong>Categories</strong> box, tick one category or several, then click <strong>Add their items</strong>. <strong>Find &amp; Select Items</strong> has a <strong>Categories</strong> box as well: tick one or more to list only their items.</li>
 </ul>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/inv_adjust__find.jpg" title="Click to enlarge"><img src="assets/manual/img/inv_adjust__find.jpg" alt="Find &amp; Select Items: the items matching &quot;cab&quot; with their quantity at the site, one of them ticked" width="800" height="286" loading="lazy" decoding="async"></a><figcaption>Find &amp; Select Items: the items matching &quot;cab&quot; with their quantity at the site, one of them ticked</figcaption></figure>
@@ -1278,7 +1283,7 @@
 </tr>
 <tr>
 <td><strong>New qty</strong></td>
-<td>Type the quantity the site should have. Leave it blank to leave the item alone.</td>
+<td>Type the quantity the site should have. Leave it blank to leave the item alone. An item with open crates at the site has a <strong>Crates</strong> button beside it: type the new weight of each crate there, and New qty follows.</td>
 </tr>
 <tr>
 <td><strong>Change</strong></td>

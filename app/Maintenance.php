@@ -105,7 +105,7 @@ final class Maintenance
         $stale = [];
         foreach (DB::all("SELECT * FROM transactions
                            WHERE is_voided = 0 AND is_pending = 0
-                             AND txn_type IN ('invoice','bill','statement_charge','finance_charge')") as $doc) {
+                             AND txn_type IN ('invoice','bill','statement_charge','finance_charge','shortage_charge')") as $doc) {
             $open = Balances::open($doc);
             $shouldBePaid = $open <= 0.005;
             if (($shouldBePaid && in_array($doc['status'], ['open', 'partial'], true)) || (!$shouldBePaid && $doc['status'] === 'paid')) {
@@ -250,7 +250,7 @@ final class Maintenance
             if ($balances) {
                 $docs = DB::column(
                     "SELECT id FROM transactions
-                      WHERE txn_type IN ('invoice','bill','statement_charge','finance_charge','credit_memo','payment','vendor_credit','sales_receipt')
+                      WHERE txn_type IN ('invoice','bill','statement_charge','finance_charge','shortage_charge','credit_memo','payment','vendor_credit','sales_receipt')
                         AND is_voided = 0"
                 );
                 foreach ($docs as $id) {

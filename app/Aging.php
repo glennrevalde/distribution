@@ -43,7 +43,7 @@ final class Aging
                   LEFT JOIN customers p ON p.id = c.parent_id
                   LEFT JOIN terms tm ON tm.id = t.terms_id
                  WHERE t.is_voided = 0 AND t.is_pending = 0 AND t.txn_date <= :d
-                   AND t.txn_type IN ('invoice','statement_charge','finance_charge','payment','credit_memo')";
+                   AND t.txn_type IN ('invoice','statement_charge','finance_charge','shortage_charge','payment','credit_memo')";
         $params = ['d' => $asOf];
         if ($customerId) {
             $sql .= $withJobs ? ' AND (c.id = :c OR c.parent_id = :c)' : ' AND c.id = :c';

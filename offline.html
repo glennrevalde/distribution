@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f2a3d">
+<meta name="robots" content="noindex">
+<title>No internet connection</title>
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<style>
+@font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("assets/fonts/barlow-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 700; font-display: swap; src: url("assets/fonts/barlow-semi-condensed-latin-700-normal.woff2") format("woff2"); }
+:root { --rail: #0f2a3d; --rail-2: #133550; --ink: #102a3b; --steel: #5c7183; --frost: #edf2f5; --line: #d4dde4; --cold: #0d5b8c; --cold-deep: #094469; --crate: #f2b705; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: grid; place-items: center; padding: 1.5rem; color: var(--ink); background: var(--frost);
+  font: 400 1rem/1.55 "Barlow", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  padding-top: max(1.5rem, env(safe-area-inset-top)); padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto 0; height: 6px; background: var(--rail); border-bottom: 3px solid var(--crate); }
+.box {
+  width: min(420px, 100%); padding: 2rem 1.75rem 1.75rem; text-align: center; background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .9) inset, 0 2px 4px rgba(16, 42, 59, .07), 0 22px 40px -24px rgba(16, 42, 59, .42);
+}
+.icon { position: relative; display: inline-block; margin-bottom: 1.1rem; }
+.icon img { display: block; width: 72px; height: 72px; border-radius: 17px; box-shadow: 0 2px 0 rgba(6, 30, 46, .35), 0 12px 22px -12px rgba(6, 30, 46, .55); }
+.icon span {
+  position: absolute; right: -8px; bottom: -6px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: #fff; border: 1px solid var(--line); color: #bf3628; box-shadow: 0 2px 0 var(--line);
+}
+.icon svg { width: 16px; height: 16px; }
+h1 { margin: 0 0 .4rem; font: 700 1.6rem/1.2 "Barlow Semi Condensed", "Barlow", "Segoe UI", system-ui, sans-serif; }
+p { margin: 0 0 1.4rem; color: var(--steel); }
+button {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem; width: 100%; height: 46px; padding: 0 1.2rem; cursor: pointer;
+  font-family: inherit; font-size: 1rem; font-weight: 600; line-height: 1; color: #fff; border: 1px solid var(--cold-deep); border-radius: 7px;
+  background: var(--cold) linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, 0) 60%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .22) inset, 0 2px 0 rgba(6, 30, 46, .55), 0 6px 12px -8px rgba(6, 30, 46, .6);
+}
+button:hover { background-color: #10679d; }
+button:active { transform: translateY(2px); box-shadow: inset 0 2px 3px rgba(0, 0, 0, .25); }
+button:focus-visible { outline: 3px solid rgba(13, 91, 140, .35); outline-offset: 2px; }
+button[aria-busy="true"] { opacity: .75; cursor: progress; }
+button svg { width: 18px; height: 18px; }
+.note { margin: 1rem 0 0; font-size: .84rem; }
+@media (prefers-reduced-motion: no-preference) { button[aria-busy="true"] svg { animation: turn .8s linear infinite; } }
+@keyframes turn { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main class="box">
+  <div class="icon"><img src="assets/icons/icon-192.png" alt="" width="72" height="72">
+    <span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M2.5 8.8a14 14 0 0 1 19 0"/><path d="M5.8 12.4a9.2 9.2 0 0 1 12.4 0"/><path d="M9.2 15.9a4.6 4.6 0 0 1 5.6 0"/><circle cx="12" cy="19.4" r="1.3" fill="currentColor" stroke="none"/><path d="M3.5 3.5l17 17"/></svg></span></div>
+  <h1>No internet connection</h1>
+  <p>The system could not be reached. Check the Wi-Fi or mobile data, then try again.</p>
+  <button type="button" id="retry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4.5V9h-4.5"/></svg><span>Try again</span></button>
+  <p class="note">Pages are never kept on this device: each one is opened from the server.</p>
+</main>
+<script>
+(function () {
+  var b = document.getElementById('retry');
+  function again() { b.setAttribute('aria-busy', 'true'); b.querySelector('span').textContent = 'Trying again'; location.reload(); }
+  b.addEventListener('click', again);
+  // back online: the page opens by itself
+  window.addEventListener('online', again);
+})();
+</script>
+</body>
+</html>

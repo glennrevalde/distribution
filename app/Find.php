@@ -26,7 +26,7 @@ final class Find
     /** Types that never post to the books */
     public const NON_POSTING = ['estimate', 'sales_order', 'purchase_order'];
     /** Types that carry a due date and an open balance */
-    public const DUE_TYPES = ['invoice', 'statement_charge', 'finance_charge', 'bill'];
+    public const DUE_TYPES = ['invoice', 'statement_charge', 'finance_charge', 'shortage_charge', 'bill'];
 
     // ------------------------------------------------------------------ the filters
 

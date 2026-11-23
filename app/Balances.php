@@ -4,7 +4,7 @@ declare(strict_types=1);
 /** Open balances, applied payments and credits, document status. */
 final class Balances
 {
-    public const RECEIVABLE_DOCS = ['invoice', 'statement_charge', 'finance_charge'];
+    public const RECEIVABLE_DOCS = ['invoice', 'statement_charge', 'finance_charge', 'shortage_charge'];
     public const PAYABLE_DOCS = ['bill'];
     public const CUSTOMER_CREDITS = ['payment', 'credit_memo'];
     public const VENDOR_CREDITS = ['vendor_credit'];
@@ -146,7 +146,7 @@ final class Balances
                FROM transactions t
                JOIN customers c ON c.id = t.customer_id
                LEFT JOIN terms tm ON tm.id = t.terms_id
-              WHERE t.customer_id IN $in AND t.txn_type IN ('invoice','statement_charge','finance_charge')
+              WHERE t.customer_id IN $in AND t.txn_type IN ('invoice','statement_charge','finance_charge','shortage_charge')
                 AND t.is_voided = 0 AND t.is_pending = 0 AND t.status IN ('open','partial')
               ORDER BY t.due_date, t.txn_date, t.id",
             $p

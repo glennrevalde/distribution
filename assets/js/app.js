@@ -310,9 +310,9 @@
   window.AppQuickAdd = (function () {
     let cfg = null;
     try { cfg = JSON.parse(document.body.dataset.quickAdd || 'null'); } catch (e) { cfg = null; }
-    const NOUN = { customer: 'customer', vendor: 'supplier', account: 'account', item: 'item', category: 'category', uom: 'unit of measure' };
-    const TITLE = { customer: 'New customer or job', vendor: 'New supplier', account: 'New account', item: 'New item', category: 'New category', uom: 'New unit of measure' };
-    const ADDED = { customer: 'Customer', vendor: 'Supplier', account: 'Account', item: 'Item', category: 'Category', uom: 'Unit of measure' };
+    const NOUN = { customer: 'customer', vendor: 'supplier', account: 'account', item: 'item', category: 'category', uom: 'unit of measure', rep: 'sales representative' };
+    const TITLE = { customer: 'New customer or job', vendor: 'New supplier', account: 'New account', item: 'New item', category: 'New category', uom: 'New unit of measure', rep: 'New sales representative' };
+    const ADDED = { customer: 'Customer', vendor: 'Supplier', account: 'Account', item: 'Item', category: 'Category', uom: 'Unit of measure', rep: 'Sales representative' };
     let modalEl = null, modal = null, frame = null, origin = null, originKind = null, added = false, ready = false;
 
     function entries(sel) {
@@ -336,7 +336,20 @@
         + '</div></div>';
       document.body.appendChild(modalEl);
       frame = modalEl.querySelector('iframe');
-      frame.addEventListener('load', () => { modalEl.classList.remove('is-loading'); });
+      frame.addEventListener('load', () => {
+        modalEl.classList.remove('is-loading');
+        // v2: a short form (a sales rep, a category) gets a shorter window; room is kept for its drop-down lists
+        frame.style.height = '';
+        try {
+          const doc = frame.contentDocument;
+          if (doc && doc.body && doc.body.classList.contains('is-popup') && window.innerWidth >= 768) {
+            const cs = frame.contentWindow.getComputedStyle(doc.body);
+            const h = Math.ceil(doc.body.scrollHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0));
+            const max = Math.min(window.innerHeight * 0.78, 860);
+            if (h + 8 < max) frame.style.height = Math.max(440, h + 8) + 'px';
+          }
+        } catch (e) { /* another origin: keep the usual height */ }
+      });
       modal = new bootstrap.Modal(modalEl);
       modalEl.addEventListener('shown.bs.modal', () => { ready = true; });
       modalEl.addEventListener('hidden.bs.modal', () => {
@@ -427,6 +440,10 @@
           if (!ts.length || ts.indexOf(r.type) >= 0 || s === origin) addOption(s, r.id, r.label);
         } else if ((r.kind === 'category' || r.kind === 'uom') && k === r.kind) {
           addOption(s, r.id, r.label);
+        } else if (r.kind === 'rep' && k === 'rep') {
+          // a box that says what each person is (Sales representative, Van salesman, Cashier) gets the same
+          const typed = Array.prototype.some.call(s.options, (o) => /\((Sales representative|Van salesman|Cashier)\)$/.test(o.text));
+          addOption(s, r.id, typed && r.typed ? r.typed : r.label);
         }
       });
       // v44: the page may need more than the new choice (the units of a new U/M set on the item form)

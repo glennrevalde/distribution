@@ -1,7 +1,7 @@
 -- =====================================================================
 --  G-SMaRT Distribution System - clean database (setup lists and users, no transactions)
---  Generated 2026-11-22 19:15:55 +08:00 from database `gsmart_distribution`
---  107 tables, 1189 rows (0 transactions)
+--  Generated 2026-11-22 22:16:26 +08:00 from database `gsmart_distribution`
+--  109 tables, 1241 rows (0 transactions)
 --
 --  Import:  phpMyAdmin > Import > choose this file > Go
 --      or:  mysql -u root -p < gsmart_distribution_sample.sql
@@ -310,7 +310,10 @@ CREATE TABLE sales_reps (
   initials  VARCHAR(10)  NULL,
   user_id   INT UNSIGNED NULL,
   commission_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
+  rep_type  VARCHAR(12)  NOT NULL DEFAULT 'sales_rep',   -- distribution: sales_rep, van (van salesman), cashier
+  customer_id INT UNSIGNED NULL,                         -- distribution: the employee as a customer, for shortages charged to them
   is_active TINYINT(1)   NOT NULL DEFAULT 1,
+  KEY ix_rep_customer (customer_id),
   CONSTRAINT fk_rep_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -453,6 +456,7 @@ CREATE TABLE sites (
   name      VARCHAR(80)  NOT NULL,
   site_type ENUM('warehouse','store','stockroom','van','damaged','other') NOT NULL DEFAULT 'warehouse',
   address   VARCHAR(255) NULL,
+  sales_rep_id INT UNSIGNED NULL,                        -- distribution: the van salesman (or outlet cashier) answerable for its stock
   is_active TINYINT(1)   NOT NULL DEFAULT 1,
   UNIQUE KEY uq_sites_code (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -628,7 +632,8 @@ CREATE TABLE transactions (
   -- payment, credit_memo, refund, purchase_order, bill, vendor_credit, item_receipt,
   -- bill_payment, check, deposit, transfer, journal, inventory_adjustment,
   -- inventory_transfer, build_assembly, pos_sale, pos_return, depreciation,
-  -- asset_disposal, bank_charge, bank_interest, item_processing, cash_voucher, vendor_advance
+  -- asset_disposal, bank_charge, bank_interest, item_processing, cash_voucher, vendor_advance,
+  -- shortage_charge (distribution: stock short charged to the employee answerable for it, at cost)
   txn_no             VARCHAR(30)  NULL,
   txn_date           DATE         NOT NULL,
   due_date           DATE         NULL,
@@ -2048,7 +2053,7 @@ CREATE TABLE crates (
   unit_cost       DECIMAL(15,4) NOT NULL DEFAULT 0,
   production_date DATE NULL,
   expiry_date     DATE NULL,
-  status          VARCHAR(10)  NOT NULL DEFAULT 'open',  -- open, sold, converted
+  status          VARCHAR(10)  NOT NULL DEFAULT 'open',  -- open, sold, converted, used (emptied by shrinkage, shortage or an adjustment)
   converted_at    DATETIME     NULL,
   converted_by    INT UNSIGNED NULL,
   convert_note    VARCHAR(255) NULL,
@@ -2069,7 +2074,7 @@ CREATE TABLE crate_movements (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   crate_id    BIGINT UNSIGNED NOT NULL,
   move_date   DATE         NOT NULL,
-  kind        VARCHAR(10)  NOT NULL,       -- receive, sale, auto, transfer, convert
+  kind        VARCHAR(10)  NOT NULL,       -- receive, sale, auto, transfer, convert, shrink, shortage
   txn_id      BIGINT UNSIGNED NULL,
   line_id     BIGINT UNSIGNED NULL,
   qty         DECIMAL(15,4) NOT NULL DEFAULT 0,  -- base units taken out (received: put in)
@@ -2087,94 +2092,160 @@ CREATE TABLE crate_movements (
   CONSTRAINT fk_cm_crate FOREIGN KEY (crate_id) REFERENCES crates(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- Distribution (v2): Inventory Transfer Closing. The van salesman (or an outlet) remits the day and sends back what
+-- is left; each line is a crate or an item, with what was on hand, what came back and the difference, split into
+-- shrinkage (adjusted to the shrinkage account) and shortage (charged to the employee as a receivable, at cost).
+-- ---------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS transfer_closing_lines;
+DROP TABLE IF EXISTS transfer_closings;
+CREATE TABLE transfer_closings (
+  id                  INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  closing_no          VARCHAR(30)  NOT NULL,
+  closing_date        DATE         NOT NULL,
+  from_site_id        INT UNSIGNED NOT NULL,              -- the van or outlet closed
+  to_site_id          INT UNSIGNED NOT NULL,              -- the warehouse or cold storage the stock goes back to
+  sales_rep_id        INT UNSIGNED NULL,                  -- the van salesman or cashier who remits
+  customer_id         INT UNSIGNED NULL,                  -- who the shortage is charged to (the employee as a customer)
+  shrink_account_id   INT UNSIGNED NULL,
+  shortage_account_id INT UNSIGNED NULL,
+  transferred_by      VARCHAR(80)  NULL,
+  checked_by          VARCHAR(80)  NULL,
+  received_by         VARCHAR(80)  NULL,
+  memo                VARCHAR(255) NULL,
+  transfer_txn_id     BIGINT UNSIGNED NULL,               -- the inventory transfer back
+  shrink_txn_id       BIGINT UNSIGNED NULL,               -- the inventory adjustment for the shrinkage
+  shortage_txn_id     BIGINT UNSIGNED NULL,               -- the shortage charge
+  balance_qty         DECIMAL(15,4) NOT NULL DEFAULT 0,
+  transfer_qty        DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shrink_qty          DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shortage_qty        DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shrink_amount       DECIMAL(15,2) NOT NULL DEFAULT 0,
+  shortage_amount     DECIMAL(15,2) NOT NULL DEFAULT 0,
+  status              VARCHAR(10)  NOT NULL DEFAULT 'posted',   -- posted, void
+  void_reason         VARCHAR(255) NULL,
+  voided_by           INT UNSIGNED NULL,
+  voided_at           DATETIME     NULL,
+  created_by          INT UNSIGNED NULL,
+  created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_tc_no (closing_no),
+  KEY ix_tc_date (closing_date),
+  KEY ix_tc_from (from_site_id, closing_date),
+  KEY ix_tc_rep (sales_rep_id),
+  KEY ix_tc_transfer (transfer_txn_id),
+  KEY ix_tc_shrink (shrink_txn_id),
+  KEY ix_tc_shortage (shortage_txn_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE transfer_closing_lines (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  closing_id   INT UNSIGNED NOT NULL,
+  line_no      INT          NOT NULL DEFAULT 0,
+  item_id      INT UNSIGNED NOT NULL,
+  crate_id     BIGINT UNSIGNED NULL,                      -- a crate line: one crate (else the item's stock outside crates)
+  crate_no     VARCHAR(30)  NULL,
+  unit         VARCHAR(20)  NULL,
+  balance      DECIMAL(15,4) NOT NULL DEFAULT 0,          -- on hand at the van / outlet when closed
+  transfer_qty DECIMAL(15,4) NOT NULL DEFAULT 0,          -- came back (crates, kilos, packs ...)
+  shrink_qty   DECIMAL(15,4) NOT NULL DEFAULT 0,
+  shortage_qty DECIMAL(15,4) NOT NULL DEFAULT 0,
+  unit_cost    DECIMAL(15,4) NOT NULL DEFAULT 0,
+  note         VARCHAR(255) NULL,
+  KEY ix_tcl_closing (closing_id),
+  KEY ix_tcl_item (item_id),
+  KEY ix_tcl_crate (crate_id),
+  CONSTRAINT fk_tcl_closing FOREIGN KEY (closing_id) REFERENCES transfer_closings(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------------
 --  2. DATA
 -- ---------------------------------------------------------------------
 
 -- settings (54 rows)
 INSERT INTO `settings` (`setting_key`,`setting_value`,`updated_at`) VALUES
-('adopt_group_price','1','2026-11-22 19:15:54'),
-('allow_negative_stock','1','2026-11-22 19:15:54'),
-('audit_retention_years','10','2026-11-22 19:15:54'),
-('auto_recost_limit','2000','2026-11-22 19:15:54'),
-('auto_recost_scope','process','2026-11-22 19:15:54'),
-('bir_signatory_name','','2026-11-22 19:15:54'),
-('bir_signatory_tin','','2026-11-22 19:15:54'),
-('bir_signatory_title','','2026-11-22 19:15:54'),
-('bir_zip_code','','2026-11-22 19:15:54'),
-('block_expired_sales','0','2026-11-22 19:15:54'),
-('block_zero_cost_processing','1','2026-11-22 19:15:54'),
-('block_zero_cost_sales','1','2026-11-22 19:15:54'),
-('bt_printer_autoprint','0','2026-11-22 19:15:54'),
-('bt_printer_cut','0','2026-11-22 19:15:54'),
-('bt_printer_enabled','0','2026-11-22 19:15:54'),
-('bt_printer_feed','4','2026-11-22 19:15:54'),
-('bt_printer_name','','2026-11-22 19:15:54'),
-('bt_printer_width','32','2026-11-22 19:15:54'),
-('closing_date','','2026-11-22 19:15:54'),
-('company_address','Company address','2026-11-22 19:15:55'),
-('company_email','','2026-11-22 19:15:55'),
-('company_logo','','2026-11-22 19:15:54'),
-('company_name','Your Company Name','2026-11-22 19:15:55'),
-('company_phone','','2026-11-22 19:15:55'),
-('company_tin','','2026-11-22 19:15:55'),
-('costing_method','weighted_average','2026-11-22 19:15:54'),
-('expiry_warn_days','30','2026-11-22 19:15:54'),
-('finance_charge_grace_days','0','2026-11-22 19:15:54'),
-('finance_charge_min','50','2026-11-22 19:15:54'),
-('finance_charge_on_charges','0','2026-11-22 19:15:54'),
-('finance_charge_rate','12','2026-11-22 19:15:54'),
-('fiscal_year_start_month','1','2026-11-22 19:15:54'),
-('item_search_by_page','','2026-11-22 19:15:54'),
-('item_search_format','code_name','2026-11-22 19:15:54'),
-('large_discount_pct','10','2026-11-22 19:15:54'),
-('logo_targets','','2026-11-22 19:15:54'),
-('max_failed_logins','5','2026-11-22 19:15:54'),
-('pos_posting_mode','per_sale','2026-11-22 19:15:54'),
-('pos_receipt_footer','Thank you for shopping!\nThis serves as your official receipt.','2026-11-22 19:15:54'),
-('pos_receipt_show_customer','1','2026-11-22 19:15:54'),
-('pos_receipt_title','OFFICIAL RECEIPT','2026-11-22 19:15:54'),
-('pos_receipt_title_charge','CHARGE INVOICE','2026-11-22 19:15:54'),
-('pos_receipt_title_payment','ACKNOWLEDGEMENT RECEIPT','2026-11-22 19:15:54'),
-('pos_receipt_title_return','RETURN / REFUND','2026-11-22 19:15:54'),
-('processing_cost_tolerance','2','2026-11-22 19:15:54'),
-('pw_expiry_days','90','2026-11-22 19:15:54'),
-('pw_min_length','8','2026-11-22 19:15:54'),
-('pw_require_number','1','2026-11-22 19:15:54'),
-('pw_require_symbol','1','2026-11-22 19:15:54'),
-('pw_require_upper','1','2026-11-22 19:15:54'),
-('session_timeout_minutes','30','2026-11-22 19:15:54'),
-('track_expiry','0','2026-11-22 19:15:54'),
-('track_group_sales','1','2026-11-22 19:15:54'),
-('withholding_agent','1','2026-11-22 19:15:54');
+('adopt_group_price','1','2026-11-22 22:16:25'),
+('allow_negative_stock','1','2026-11-22 22:16:25'),
+('audit_retention_years','10','2026-11-22 22:16:25'),
+('auto_recost_limit','2000','2026-11-22 22:16:25'),
+('auto_recost_scope','process','2026-11-22 22:16:25'),
+('bir_signatory_name','','2026-11-22 22:16:25'),
+('bir_signatory_tin','','2026-11-22 22:16:25'),
+('bir_signatory_title','','2026-11-22 22:16:25'),
+('bir_zip_code','','2026-11-22 22:16:25'),
+('block_expired_sales','0','2026-11-22 22:16:25'),
+('block_zero_cost_processing','1','2026-11-22 22:16:25'),
+('block_zero_cost_sales','1','2026-11-22 22:16:25'),
+('bt_printer_autoprint','0','2026-11-22 22:16:25'),
+('bt_printer_cut','0','2026-11-22 22:16:25'),
+('bt_printer_enabled','0','2026-11-22 22:16:25'),
+('bt_printer_feed','4','2026-11-22 22:16:25'),
+('bt_printer_name','','2026-11-22 22:16:25'),
+('bt_printer_width','32','2026-11-22 22:16:25'),
+('closing_date','','2026-11-22 22:16:25'),
+('company_address','Company address','2026-11-22 22:16:26'),
+('company_email','','2026-11-22 22:16:26'),
+('company_logo','','2026-11-22 22:16:25'),
+('company_name','Your Company Name','2026-11-22 22:16:26'),
+('company_phone','','2026-11-22 22:16:26'),
+('company_tin','','2026-11-22 22:16:26'),
+('costing_method','weighted_average','2026-11-22 22:16:25'),
+('expiry_warn_days','30','2026-11-22 22:16:25'),
+('finance_charge_grace_days','0','2026-11-22 22:16:25'),
+('finance_charge_min','50','2026-11-22 22:16:25'),
+('finance_charge_on_charges','0','2026-11-22 22:16:25'),
+('finance_charge_rate','12','2026-11-22 22:16:25'),
+('fiscal_year_start_month','1','2026-11-22 22:16:25'),
+('item_search_by_page','','2026-11-22 22:16:25'),
+('item_search_format','code_name','2026-11-22 22:16:25'),
+('large_discount_pct','10','2026-11-22 22:16:25'),
+('logo_targets','','2026-11-22 22:16:25'),
+('max_failed_logins','5','2026-11-22 22:16:25'),
+('pos_posting_mode','per_sale','2026-11-22 22:16:25'),
+('pos_receipt_footer','Thank you for shopping!\nThis serves as your official receipt.','2026-11-22 22:16:25'),
+('pos_receipt_show_customer','1','2026-11-22 22:16:25'),
+('pos_receipt_title','OFFICIAL RECEIPT','2026-11-22 22:16:25'),
+('pos_receipt_title_charge','CHARGE INVOICE','2026-11-22 22:16:25'),
+('pos_receipt_title_payment','ACKNOWLEDGEMENT RECEIPT','2026-11-22 22:16:25'),
+('pos_receipt_title_return','RETURN / REFUND','2026-11-22 22:16:25'),
+('processing_cost_tolerance','2','2026-11-22 22:16:25'),
+('pw_expiry_days','90','2026-11-22 22:16:25'),
+('pw_min_length','8','2026-11-22 22:16:25'),
+('pw_require_number','1','2026-11-22 22:16:25'),
+('pw_require_symbol','1','2026-11-22 22:16:25'),
+('pw_require_upper','1','2026-11-22 22:16:25'),
+('session_timeout_minutes','30','2026-11-22 22:16:25'),
+('track_expiry','0','2026-11-22 22:16:25'),
+('track_group_sales','1','2026-11-22 22:16:25'),
+('withholding_agent','1','2026-11-22 22:16:25');
 
 -- users (11 rows)
 INSERT INTO `users` (`id`,`username`,`password_hash`,`full_name`,`email`,`employee_no`,`pos_default_site_id`,`pos_default_class_id`,`status`,`approval_status`,`created_via`,`approved_by`,`approved_at`,`rejected_reason`,`is_platform`,`must_change_password`,`password_changed_at`,`failed_attempts`,`last_login_at`,`last_login_ip`,`created_by`,`created_at`,`updated_at`) VALUES
-(1,'admin','$2y$10$Nn6J/NlDHKeLEXm.7uSKQ.r9eq/FRH6rXAe/7XcepPLw2D98/3VBa','System Administrator','admin@northpoint.test','EMP-001',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,1,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(2,'accountant','$2y$10$chNyme0cNh0B.BDABE1srONobbP5Oa4ceYVYFGYWQDbGJqT1e/Rum','Ana Cruz','accountant@northpoint.test','EMP-002',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(3,'arclerk','$2y$10$PCdhit2DchjQXv1AC56G8eRqVSkgektl0avvKhPZIeY8plTVHiqZy','Ben Garcia','arclerk@northpoint.test','EMP-003',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(4,'apclerk','$2y$10$GumnXUQrr59wKyBAuDnWwewaO5fK7c1OxX9n.2HrOF7tfQoYEvLM2','Carla Lim','apclerk@northpoint.test','EMP-004',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(5,'invclerk','$2y$10$VNBsvQyNg2bmiEOdw0E7Zuv6owKLYGpNdk.NuluraCjpRnYzNy20.','Dan Villanueva','invclerk@northpoint.test','EMP-005',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(6,'allocator','$2y$10$SOv3c7jm4SL85Et8f8DTNeDtXVGsun9lsXU7iKbRA1OTbYBm9XU52','Lito Bautista','allocator@northpoint.test','EMP-006',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(7,'salesrep','$2y$10$QeC4ZFOZs0ydLsUxWHLS2Od180gtA4XYNDDGawF7K8CXZctiQXAIq','Maria Santos','salesrep@northpoint.test','EMP-007',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(8,'supervisor','$2y$10$F4Gcj36sIzxZpAjfgpblF.TbgyIyfNbLZdMC99mK7Mlyi4cxTQP7m','Fred Tan','supervisor@northpoint.test','EMP-008',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(9,'cashier1','$2y$10$1f9/Yc9O8EBKo4TfbSWMheaqkDLhKfpJjAMdJwcriRLO4ZPwFEORy','Ella Ramos','cashier1@northpoint.test','EMP-009',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(10,'glenn','$2y$10$.CSgMoRpe9g70/sZXkxDB.RX9c1TRJxK1AShuted3i15YGG6a/T6G','Glenn Abad','glenn@northpoint.test','EMP-010',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL),
-(11,'auditor','$2y$10$docUwpW4AyJJ.uMtzL9UJ.g0T1EC806i92MDD7YzYzREghpnxA4qC','Grace Uy','auditor@northpoint.test','EMP-011',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55',NULL);
+(1,'admin','$2y$10$ACO8DUxqYowF8vugV8NTVOJBd1eDfexg4tlHAAG.R50YVZfs2WwyO','System Administrator','admin@northpoint.test','EMP-001',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,1,'2026-11-22 22:16:25',0,NULL,NULL,NULL,'2026-11-22 22:16:25',NULL),
+(2,'accountant','$2y$10$aDO8ese/JnYrwcNlB8cGV.0OKNHjZBhDyNq.jAPDfEvPNp9NArUDK','Ana Cruz','accountant@northpoint.test','EMP-002',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:25',0,NULL,NULL,NULL,'2026-11-22 22:16:25',NULL),
+(3,'arclerk','$2y$10$NSRpjlFLLX/YMb6tyLrduul5uLhXqxgHO3Vz64TgfrqMSBGJ0grK2','Ben Garcia','arclerk@northpoint.test','EMP-003',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:25',0,NULL,NULL,NULL,'2026-11-22 22:16:25',NULL),
+(4,'apclerk','$2y$10$9FX0eZggPVJE.FIRiaT1suf1sWUtm2cvLeNE3uO91Ht9c3OOsfAwS','Carla Lim','apclerk@northpoint.test','EMP-004',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:25',0,NULL,NULL,NULL,'2026-11-22 22:16:25',NULL),
+(5,'invclerk','$2y$10$ksNPzf7TNGF3ruFOphRv1uXsyf0pZorxc42xgzM2q.7EnjT4awbUS','Dan Villanueva','invclerk@northpoint.test','EMP-005',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:25',0,NULL,NULL,NULL,'2026-11-22 22:16:25',NULL),
+(6,'allocator','$2y$10$fxhXBlvxz09oxhcWLO6YueYMfzV3laTM6f5nd1jMBeovpUnR35RYq','Lito Bautista','allocator@northpoint.test','EMP-006',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:25',0,NULL,NULL,NULL,'2026-11-22 22:16:25',NULL),
+(7,'salesrep','$2y$10$jGQ0VhZz3aFttHluxJXg/u7H7/Asy7LkEPsyldLaxAd3fQPLlRxnS','Maria Santos','salesrep@northpoint.test','EMP-007',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:26',0,NULL,NULL,NULL,'2026-11-22 22:16:26',NULL),
+(8,'supervisor','$2y$10$mRzzVwwmMIWxy7cmbJuetOHQXanvGCR0tXRvMtM5RZzVK.cie1Ovi','Fred Tan','supervisor@northpoint.test','EMP-008',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:26',0,NULL,NULL,NULL,'2026-11-22 22:16:26',NULL),
+(9,'cashier1','$2y$10$UApMmz0hhm6873lgh8cML.gdymrONcgozQiLVQJCDSDKneMXlKZ6W','Ella Ramos','cashier1@northpoint.test','EMP-009',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:26',0,NULL,NULL,NULL,'2026-11-22 22:16:26',NULL),
+(10,'glenn','$2y$10$CoLkpsYFqTadjEykHqRY9eoj92cbVCjbyX.q7NfJGj3Yf4p257Jx.','Glenn Abad','glenn@northpoint.test','EMP-010',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:26',0,NULL,NULL,NULL,'2026-11-22 22:16:26',NULL),
+(11,'auditor','$2y$10$BqlfDr4UyXB5Ajhv527vs.l3lbEkdCDtcI9/2/kPPYPSTgDu155pu','Grace Uy','auditor@northpoint.test','EMP-011',NULL,NULL,'active','approved','admin',NULL,NULL,NULL,0,0,'2026-11-22 22:16:26',0,NULL,NULL,NULL,'2026-11-22 22:16:26',NULL);
 
 -- roles (11 rows)
 INSERT INTO `roles` (`id`,`name`,`description`,`is_admin`,`is_system`,`all_sites`,`created_at`,`updated_at`) VALUES
-(1,'Administrator','Everything in every module, including user accounts, roles, page access, the closing date, and the audit trail.',1,1,1,'2026-11-22 19:15:54',NULL),
-(2,'Accountant','Chart of Accounts, Fixed Assets, Banking and reconciliation, the BIR Reports and Withholding Tax Table, all module reports, and the financial statements.',0,1,1,'2026-11-22 19:15:54',NULL),
-(3,'A/R Clerk','Customers module transactions and the Customer and Receivables reports.',0,1,1,'2026-11-22 19:15:54',NULL),
-(4,'A/P Clerk','Vendors module transactions, Pay Bills, advances to suppliers, the Vendors and Payables reports, and BIR Form 2307 for suppliers.',0,1,1,'2026-11-22 19:15:54',NULL),
-(5,'Inventory Clerk','Items, sites, receiving, adjustments, assembly builds, disassembly and processing orders, stock counts, and inventory quantity reports.',0,1,1,'2026-11-22 19:15:54',NULL),
-(6,'Sales Representative','Estimates, sales orders, and invoices, and the Sales reports.',0,1,1,'2026-11-22 19:15:54',NULL),
-(7,'Cashier','POS sales, returns, and cash drops at the assigned terminal only.',0,1,0,'2026-11-22 19:15:55',NULL),
-(8,'POS Supervisor','Everything a cashier can do, plus approving voids, refunds, price overrides, and large discounts, and running X- and Z-readings.',0,1,1,'2026-11-22 19:15:55',NULL),
-(9,'Allocation Officer','Supplier Allocation, the Supplier Items of each supplier, Pick-Up Supplier Items, the Crate Center and the crate and allocation reports.',0,1,1,'2026-11-22 19:15:55',NULL),
-(10,'Pick-Up Crew','The pick-ups assigned to them: weighing and dating the crates at the supplier and marking the pick-up complete.',0,1,1,'2026-11-22 19:15:55',NULL),
-(11,'Auditor','View-only access to all transactions, reports, and the audit trail. Cannot create or change anything.',0,1,1,'2026-11-22 19:15:55',NULL);
+(1,'Administrator','Everything in every module, including user accounts, roles, page access, the closing date, and the audit trail.',1,1,1,'2026-11-22 22:16:25',NULL),
+(2,'Accountant','Chart of Accounts, Fixed Assets, Banking and reconciliation, the BIR Reports and Withholding Tax Table, all module reports, and the financial statements.',0,1,1,'2026-11-22 22:16:25',NULL),
+(3,'A/R Clerk','Customers module transactions and the Customer and Receivables reports.',0,1,1,'2026-11-22 22:16:25',NULL),
+(4,'A/P Clerk','Vendors module transactions, Pay Bills, advances to suppliers, the Vendors and Payables reports, and BIR Form 2307 for suppliers.',0,1,1,'2026-11-22 22:16:25',NULL),
+(5,'Inventory Clerk','Items, sites, receiving, adjustments, assembly builds, disassembly and processing orders, stock counts, and inventory quantity reports.',0,1,1,'2026-11-22 22:16:25',NULL),
+(6,'Sales Representative','Estimates, sales orders, and invoices, and the Sales reports.',0,1,1,'2026-11-22 22:16:25',NULL),
+(7,'Cashier','POS sales, returns, and cash drops at the assigned terminal only.',0,1,0,'2026-11-22 22:16:25',NULL),
+(8,'POS Supervisor','Everything a cashier can do, plus approving voids, refunds, price overrides, and large discounts, and running X- and Z-readings.',0,1,1,'2026-11-22 22:16:25',NULL),
+(9,'Allocation Officer','Supplier Allocation, the Supplier Items of each supplier, Pick-Up Supplier Items, the Crate Center and the crate and allocation reports.',0,1,1,'2026-11-22 22:16:25',NULL),
+(10,'Pick-Up Crew','The pick-ups assigned to them: weighing and dating the crates at the supplier and marking the pick-up complete.',0,1,1,'2026-11-22 22:16:25',NULL),
+(11,'Auditor','View-only access to all transactions, reports, and the audit trail. Cannot create or change anything.',0,1,1,'2026-11-22 22:16:25',NULL);
 
 -- user_roles (11 rows)
 INSERT INTO `user_roles` (`user_id`,`role_id`) VALUES
@@ -2205,7 +2276,7 @@ INSERT INTO `modules` (`id`,`code`,`name`,`icon`,`sort_order`) VALUES
 (11,'company','Company','buildings',11),
 (12,'comm','Community','chat-dots',12);
 
--- pages (226 rows)
+-- pages (235 rows)
 INSERT INTO `pages` (`id`,`page_key`,`module_id`,`name`,`page_type`,`menu_group`,`sort_order`,`show_in_menu`,`description`) VALUES
 (1,'home.dashboard',1,'Home Dashboard','center','Home',10,1,NULL),
 (2,'home.reports',1,'Report Center','center','Home',20,1,NULL),
@@ -2336,110 +2407,119 @@ INSERT INTO `pages` (`id`,`page_key`,`module_id`,`name`,`page_type`,`menu_group`
 (126,'inv.uom',6,'U/M Set List','list','Lists',1260,1,NULL),
 (127,'inv.formulas',6,'Processing Formulas (Multi-Output BOM)','list','Lists',1270,1,NULL),
 (128,'inv.transfers',6,'Transfer Inventory','transaction','Transactions',1280,1,NULL),
-(129,'inv.adjust',6,'Adjust Quantity/Value on Hand','transaction','Transactions',1290,1,NULL),
-(130,'inv.build',6,'Build Assemblies','transaction','Transactions',1300,1,NULL),
-(131,'inv.process',6,'Disassemble / Process Items','transaction','Transactions',1310,1,NULL),
-(132,'inv.physical_count',6,'Physical Inventory Count','transaction','Transactions',1320,1,NULL),
-(133,'inv.change_prices',6,'Change Item Prices','transaction','Transactions',1330,1,NULL),
-(134,'inv.set_prices',6,'Set Item Prices and Levels','transaction','Transactions',1340,1,NULL),
-(135,'inv.crates',6,'Crate Center','center','Crates',1350,1,NULL),
-(136,'inv.crate_convert',6,'Convert Crates to Kilos','transaction','Crates',1360,1,NULL),
-(137,'inv.crate_move',6,'Move Crates to Another Site','transaction','Crates',1370,1,NULL),
-(138,'rpt.crates_on_hand',6,'Crates Remaining by Item','report','Crate Reports',1380,1,NULL),
-(139,'rpt.crate_detail',6,'Kilos per Crate by Item','report','Crate Reports',1390,1,NULL),
-(140,'rpt.crates_sold',6,'Crates Sold with Production and Expiry Dates','report','Crate Reports',1400,1,NULL),
-(141,'rpt.crate_movements',6,'Crate Movement History','report','Crate Reports',1410,1,NULL),
-(142,'rpt.crates_received',6,'Crates Received by Supplier','report','Crate Reports',1420,1,NULL),
-(143,'rpt.qoh_by_site',6,'Quantity on Hand by Site','report','Inventory Reports',1430,1,NULL),
-(144,'rpt.inv_valuation_summary',6,'Inventory Valuation Summary','report','Inventory Reports',1440,1,NULL),
-(145,'rpt.inv_valuation_site',6,'Inventory Valuation Summary by Site','report','Inventory Reports',1450,1,NULL),
-(146,'rpt.inv_valuation_detail',6,'Inventory Valuation Detail','report','Inventory Reports',1460,1,NULL),
-(147,'rpt.expiring_items',6,'Expiring and Expired Items','report','Inventory Reports',1470,1,NULL),
-(148,'rpt.stock_by_lot',6,'Stock by Production and Expiry Date','report','Inventory Reports',1480,1,NULL),
-(149,'rpt.avg_cost_changes',6,'Average Cost Changes','report','Inventory Reports',1490,1,NULL),
-(150,'rpt.stock_status_item',6,'Inventory Stock Status by Item','report','Inventory Reports',1500,1,NULL),
-(151,'rpt.stock_status_vendor',6,'Inventory Stock Status by Vendor','report','Inventory Reports',1510,1,NULL),
-(152,'rpt.stock_status_site',6,'Inventory Stock Status by Site','report','Inventory Reports',1520,1,NULL),
-(153,'rpt.physical_worksheet',6,'Physical Inventory Worksheet','report','Inventory Reports',1530,1,NULL),
-(154,'rpt.pending_builds',6,'Pending Builds','report','Inventory Reports',1540,1,NULL),
-(155,'rpt.pending_builds_site',6,'Pending Builds by Site','report','Inventory Reports',1550,1,NULL),
-(156,'rpt.processing_register',6,'Processing & Disassembly Register','report','Inventory Reports',1560,1,NULL),
-(157,'rpt.coproduct_costs',6,'Co-product & By-product Cost Allocation','report','Inventory Reports',1570,1,NULL),
-(158,'rpt.process_yield',6,'Processing Yield Analysis','report','Inventory Reports',1580,1,NULL),
-(159,'rpt.negative_inventory',6,'Negative Inventory Listing','report','Inventory Reports',1590,1,NULL),
-(160,'rpt.inv_no_movement',6,'No. of Days Inventory Has No Movement','report','Inventory Reports',1600,1,NULL),
-(161,'rpt.inv_custom',6,'Customized Inventory Report','report','Inventory Reports',1610,1,NULL),
-(162,'rpt.inv_movement_summary',6,'Inventory Movement Summary Report','report','Inventory Reports',1620,1,NULL),
-(163,'rpt.inv_movement_detail',6,'Inventory Movement Detailed Report','report','Inventory Reports',1630,1,NULL),
-(164,'rpt.inv_movement_txns',6,'Inventory Movement Transactions','report','Inventory Reports',1640,0,NULL),
-(165,'pos.register',7,'POS Register','transaction','Transactions',1650,1,NULL),
-(166,'pos.fb',7,'FB POS','transaction','Transactions',1660,1,NULL),
-(167,'pos.shifts',7,'Shifts, Cash Drops & Readings','transaction','Transactions',1670,1,NULL),
-(168,'pos.receipts',7,'POS Receipts, Returns & Voids','transaction','Transactions',1680,1,NULL),
-(169,'pos.approval_codes',7,'Approval Codes','transaction','Transactions',1690,1,NULL),
-(170,'pos.terminals',7,'POS Terminals','setup','Setup',1700,1,NULL),
-(171,'pos.fb_menu',7,'FB POS Menu & Groups','setup','Setup',1710,1,NULL),
-(172,'rpt.pos_sales_txn',7,'POS Sales by Transaction No. (detail)','report','Reports',1720,1,NULL),
-(173,'rpt.pos_sales_item',7,'POS Sales by Item','report','Reports',1730,1,NULL),
-(174,'rpt.pos_sales_item_group',7,'POS Sales by Item Group','report','Reports',1740,1,NULL),
-(175,'rpt.pos_sales_category',7,'POS Sales by Category','report','Reports',1750,1,NULL),
-(176,'rpt.pos_sales_cashier',7,'POS Sales by Cashier & Payment Method','report','Reports',1760,1,NULL),
-(177,'rpt.pos_sales_payment',7,'POS Sales by Payment Method','report','Reports',1770,0,NULL),
-(178,'rpt.pos_sales_hour',7,'POS Sales by Hour','report','Reports',1780,1,NULL),
-(179,'rpt.pos_daily_summary',7,'POS Daily Sales Summary','report','Reports',1790,1,NULL),
-(180,'rpt.pos_readings',7,'X- and Z-Reading Summary','report','Reports',1800,1,NULL),
-(181,'rpt.pos_discount_log',7,'POS Discount Log','report','Reports',1810,1,NULL),
-(182,'rpt.pos_void_log',7,'POS Void and Refund Log','report','Reports',1820,1,NULL),
-(183,'rpt.pos_ending_inventory',7,'Ending Inventory - POS Cashier','report','Reports',1830,1,NULL),
-(184,'rpt.pos_cash_count',7,'Cash Count Sheet','report','Reports',1840,1,NULL),
-(185,'bank.write_checks',8,'Write Checks','transaction','Transactions',1850,1,NULL),
-(186,'bank.cash_voucher',8,'Cash Voucher','transaction','Transactions',1860,1,NULL),
-(187,'bank.register',8,'Use Register','center','Transactions',1870,1,NULL),
-(188,'bank.deposits',8,'Make Deposits','transaction','Transactions',1880,1,NULL),
-(189,'bank.transfers',8,'Transfer Funds','transaction','Transactions',1890,1,NULL),
-(190,'bank.reconcile',8,'Reconcile','transaction','Transactions',1900,1,NULL),
-(191,'rpt.recon_summary',8,'Reconciliation Summary','report','Reports',1910,1,NULL),
-(192,'rpt.recon_detail',8,'Reconciliation Detail','report','Reports',1920,1,NULL),
-(193,'rpt.recon_discrepancy',8,'Reconciliation Discrepancy','report','Reports',1930,1,NULL),
-(194,'rpt.check_register',8,'Check Register','report','Reports',1940,1,NULL),
-(195,'bir.form_2307',9,'Print BIR Form 2307','transaction','Transactions',1950,1,NULL),
-(196,'bir.wht_table',9,'Withholding Tax Table','setup','Setup',1960,1,NULL),
-(197,'rpt.bir_wht_summary',9,'Summary of Taxes Withheld from Vendors/Suppliers','report','BIR Reports',1970,1,NULL),
-(198,'rpt.bir_ewt_register',9,'Expanded Withholding Tax Register (1% / 2%)','report','BIR Reports',1980,1,NULL),
-(199,'rpt.bir_remittance',9,'Withholding Tax Remittances (0619-E, 1601-EQ, 1600-VT)','report','BIR Reports',1990,1,NULL),
-(200,'rpt.bir_vat_withholding',9,'VAT Withholding Register (1600-VT)','report','BIR Reports',2000,1,NULL);
+(129,'inv.transfer_closing',6,'Inventory Transfer Closing','transaction','Transactions',1290,1,NULL),
+(130,'inv.shortages',6,'Shortage Charges','transaction','Transactions',1300,1,NULL),
+(131,'inv.adjust',6,'Adjust Quantity/Value on Hand','transaction','Transactions',1310,1,NULL),
+(132,'inv.build',6,'Build Assemblies','transaction','Transactions',1320,1,NULL),
+(133,'inv.process',6,'Disassemble / Process Items','transaction','Transactions',1330,1,NULL),
+(134,'inv.physical_count',6,'Physical Inventory Count','transaction','Transactions',1340,1,NULL),
+(135,'inv.change_prices',6,'Change Item Prices','transaction','Transactions',1350,1,NULL),
+(136,'inv.set_prices',6,'Set Item Prices and Levels','transaction','Transactions',1360,1,NULL),
+(137,'inv.crates',6,'Crate Center','center','Crates',1370,1,NULL),
+(138,'inv.crate_convert',6,'Convert Crates to Kilos','transaction','Crates',1380,1,NULL),
+(139,'inv.crate_move',6,'Move Crates to Another Site','transaction','Crates',1390,1,NULL),
+(140,'rpt.crates_on_hand',6,'Crates Remaining by Item','report','Crate Reports',1400,1,NULL),
+(141,'rpt.crate_detail',6,'Kilos per Crate by Item','report','Crate Reports',1410,1,NULL),
+(142,'rpt.crates_sold',6,'Crates Sold with Production and Expiry Dates','report','Crate Reports',1420,1,NULL),
+(143,'rpt.crate_movements',6,'Crate Movement History','report','Crate Reports',1430,1,NULL),
+(144,'rpt.crates_received',6,'Crates Received by Supplier','report','Crate Reports',1440,1,NULL),
+(145,'rpt.closing_register',6,'Inventory Transfer Closing Register','report','Shortage and Shrinkage Reports',1450,1,NULL),
+(146,'rpt.shortage_item',6,'Shortages by Item','report','Shortage and Shrinkage Reports',1460,1,NULL),
+(147,'rpt.shortage_site',6,'Shortages by Site','report','Shortage and Shrinkage Reports',1470,1,NULL),
+(148,'rpt.shortage_rep',6,'Shortages by Sales Representative','report','Shortage and Shrinkage Reports',1480,1,NULL),
+(149,'rpt.shortage_detail',6,'Shortage Detail','report','Shortage and Shrinkage Reports',1490,1,NULL),
+(150,'rpt.shrinkage_item',6,'Shrinkage by Item','report','Shortage and Shrinkage Reports',1500,1,NULL),
+(151,'rpt.shrinkage_detail',6,'Shrinkage Detail','report','Shortage and Shrinkage Reports',1510,1,NULL),
+(152,'rpt.qoh_by_site',6,'Quantity on Hand by Site','report','Inventory Reports',1520,1,NULL),
+(153,'rpt.inv_valuation_summary',6,'Inventory Valuation Summary','report','Inventory Reports',1530,1,NULL),
+(154,'rpt.inv_valuation_site',6,'Inventory Valuation Summary by Site','report','Inventory Reports',1540,1,NULL),
+(155,'rpt.inv_valuation_detail',6,'Inventory Valuation Detail','report','Inventory Reports',1550,1,NULL),
+(156,'rpt.expiring_items',6,'Expiring and Expired Items','report','Inventory Reports',1560,1,NULL),
+(157,'rpt.stock_by_lot',6,'Stock by Production and Expiry Date','report','Inventory Reports',1570,1,NULL),
+(158,'rpt.avg_cost_changes',6,'Average Cost Changes','report','Inventory Reports',1580,1,NULL),
+(159,'rpt.stock_status_item',6,'Inventory Stock Status by Item','report','Inventory Reports',1590,1,NULL),
+(160,'rpt.stock_status_vendor',6,'Inventory Stock Status by Vendor','report','Inventory Reports',1600,1,NULL),
+(161,'rpt.stock_status_site',6,'Inventory Stock Status by Site','report','Inventory Reports',1610,1,NULL),
+(162,'rpt.physical_worksheet',6,'Physical Inventory Worksheet','report','Inventory Reports',1620,1,NULL),
+(163,'rpt.pending_builds',6,'Pending Builds','report','Inventory Reports',1630,1,NULL),
+(164,'rpt.pending_builds_site',6,'Pending Builds by Site','report','Inventory Reports',1640,1,NULL),
+(165,'rpt.processing_register',6,'Processing & Disassembly Register','report','Inventory Reports',1650,1,NULL),
+(166,'rpt.coproduct_costs',6,'Co-product & By-product Cost Allocation','report','Inventory Reports',1660,1,NULL),
+(167,'rpt.process_yield',6,'Processing Yield Analysis','report','Inventory Reports',1670,1,NULL),
+(168,'rpt.negative_inventory',6,'Negative Inventory Listing','report','Inventory Reports',1680,1,NULL),
+(169,'rpt.inv_no_movement',6,'No. of Days Inventory Has No Movement','report','Inventory Reports',1690,1,NULL),
+(170,'rpt.inv_custom',6,'Customized Inventory Report','report','Inventory Reports',1700,1,NULL),
+(171,'rpt.inv_movement_summary',6,'Inventory Movement Summary Report','report','Inventory Reports',1710,1,NULL),
+(172,'rpt.inv_movement_detail',6,'Inventory Movement Detailed Report','report','Inventory Reports',1720,1,NULL),
+(173,'rpt.inv_movement_txns',6,'Inventory Movement Transactions','report','Inventory Reports',1730,0,NULL),
+(174,'pos.register',7,'POS Register','transaction','Transactions',1740,1,NULL),
+(175,'pos.fb',7,'FB POS','transaction','Transactions',1750,1,NULL),
+(176,'pos.shifts',7,'Shifts, Cash Drops & Readings','transaction','Transactions',1760,1,NULL),
+(177,'pos.receipts',7,'POS Receipts, Returns & Voids','transaction','Transactions',1770,1,NULL),
+(178,'pos.approval_codes',7,'Approval Codes','transaction','Transactions',1780,1,NULL),
+(179,'pos.terminals',7,'POS Terminals','setup','Setup',1790,1,NULL),
+(180,'pos.fb_menu',7,'FB POS Menu & Groups','setup','Setup',1800,1,NULL),
+(181,'rpt.pos_sales_txn',7,'POS Sales by Transaction No. (detail)','report','Reports',1810,1,NULL),
+(182,'rpt.pos_sales_item',7,'POS Sales by Item','report','Reports',1820,1,NULL),
+(183,'rpt.pos_sales_item_group',7,'POS Sales by Item Group','report','Reports',1830,1,NULL),
+(184,'rpt.pos_sales_category',7,'POS Sales by Category','report','Reports',1840,1,NULL),
+(185,'rpt.pos_sales_cashier',7,'POS Sales by Cashier & Payment Method','report','Reports',1850,1,NULL),
+(186,'rpt.pos_sales_payment',7,'POS Sales by Payment Method','report','Reports',1860,0,NULL),
+(187,'rpt.pos_sales_hour',7,'POS Sales by Hour','report','Reports',1870,1,NULL),
+(188,'rpt.pos_daily_summary',7,'POS Daily Sales Summary','report','Reports',1880,1,NULL),
+(189,'rpt.pos_readings',7,'X- and Z-Reading Summary','report','Reports',1890,1,NULL),
+(190,'rpt.pos_discount_log',7,'POS Discount Log','report','Reports',1900,1,NULL),
+(191,'rpt.pos_void_log',7,'POS Void and Refund Log','report','Reports',1910,1,NULL),
+(192,'rpt.pos_ending_inventory',7,'Ending Inventory - POS Cashier','report','Reports',1920,1,NULL),
+(193,'rpt.pos_cash_count',7,'Cash Count Sheet','report','Reports',1930,1,NULL),
+(194,'bank.write_checks',8,'Write Checks','transaction','Transactions',1940,1,NULL),
+(195,'bank.cash_voucher',8,'Cash Voucher','transaction','Transactions',1950,1,NULL),
+(196,'bank.register',8,'Use Register','center','Transactions',1960,1,NULL),
+(197,'bank.deposits',8,'Make Deposits','transaction','Transactions',1970,1,NULL),
+(198,'bank.transfers',8,'Transfer Funds','transaction','Transactions',1980,1,NULL),
+(199,'bank.reconcile',8,'Reconcile','transaction','Transactions',1990,1,NULL),
+(200,'rpt.recon_summary',8,'Reconciliation Summary','report','Reports',2000,1,NULL);
 INSERT INTO `pages` (`id`,`page_key`,`module_id`,`name`,`page_type`,`menu_group`,`sort_order`,`show_in_menu`,`description`) VALUES
-(201,'rpt.bir_sales_register',9,'Output VAT / Sales Register','report','BIR Reports',2010,1,NULL),
-(202,'rpt.bir_purchase_register',9,'Input VAT / Purchases Register','report','BIR Reports',2020,1,NULL),
-(203,'rpt.bir_cvat_withheld',9,'Creditable VAT Withheld Schedule (2550Q Schedule 3)','report','BIR Reports',2030,1,NULL),
-(204,'rpt.bir_2550q',9,'Quarterly VAT Return Worksheet (2550Q)','report','BIR Reports',2040,1,NULL),
-(205,'admin.users',10,'User Accounts','admin','Setup',2050,1,NULL),
-(206,'admin.roles',10,'User Role Configuration','admin','Setup',2060,1,NULL),
-(207,'admin.page_access',10,'Page Access Configuration','admin','Setup',2070,1,NULL),
-(208,'admin.effective_access',10,'Effective Access (View as User)','admin','Setup',2080,1,NULL),
-(209,'admin.settings',10,'Company, Security & Closing Date','admin','Setup',2090,1,NULL),
-(210,'admin.utilities',10,'Utilities: Verify & Rebuild Data','admin','Setup',2100,1,NULL),
-(211,'admin.import',10,'Import from CSV','admin','Utilities',2110,1,NULL),
-(212,'admin.backup',10,'Backup & Restore','admin','Utilities',2120,1,NULL),
-(213,'admin.multi_company',10,'Multi-Company Setup','admin','Setup',2130,1,NULL),
-(214,'admin.audit_trail',10,'Audit Trail','report','Audit Reports',2140,1,NULL),
-(215,'admin.txn_history',10,'Transaction History','report','Audit Reports',2150,1,NULL),
-(216,'rpt.voided_deleted_summary',10,'Voided and Deleted Transactions Summary','report','Audit Reports',2160,1,NULL),
-(217,'rpt.voided_deleted_detail',10,'Voided and Deleted Transactions Detail','report','Audit Reports',2170,1,NULL),
-(218,'rpt.user_activity',10,'User Activity','report','Audit Reports',2180,1,NULL),
-(219,'rpt.login_history',10,'Login History','report','Audit Reports',2190,1,NULL),
-(220,'rpt.user_access',10,'User Access and Permission Changes','report','Audit Reports',2200,1,NULL),
-(221,'company.profile',11,'Company Profile & Code','admin','Company',2210,1,NULL),
-(222,'company.users',11,'Employees & Users','admin','Company',2220,1,NULL),
-(223,'company.join_requests',11,'Join Requests','admin','Company',2230,1,NULL),
-(224,'comm.chat',12,'Community Chat','center','Community',2240,1,NULL),
-(225,'comm.inquiries',12,'Questions & Inquiries','center','Community',2250,1,NULL),
-(226,'comm.manage',12,'Community Management','admin','Moderation',2260,1,NULL);
+(201,'rpt.recon_detail',8,'Reconciliation Detail','report','Reports',2010,1,NULL),
+(202,'rpt.recon_discrepancy',8,'Reconciliation Discrepancy','report','Reports',2020,1,NULL),
+(203,'rpt.check_register',8,'Check Register','report','Reports',2030,1,NULL),
+(204,'bir.form_2307',9,'Print BIR Form 2307','transaction','Transactions',2040,1,NULL),
+(205,'bir.wht_table',9,'Withholding Tax Table','setup','Setup',2050,1,NULL),
+(206,'rpt.bir_wht_summary',9,'Summary of Taxes Withheld from Vendors/Suppliers','report','BIR Reports',2060,1,NULL),
+(207,'rpt.bir_ewt_register',9,'Expanded Withholding Tax Register (1% / 2%)','report','BIR Reports',2070,1,NULL),
+(208,'rpt.bir_remittance',9,'Withholding Tax Remittances (0619-E, 1601-EQ, 1600-VT)','report','BIR Reports',2080,1,NULL),
+(209,'rpt.bir_vat_withholding',9,'VAT Withholding Register (1600-VT)','report','BIR Reports',2090,1,NULL),
+(210,'rpt.bir_sales_register',9,'Output VAT / Sales Register','report','BIR Reports',2100,1,NULL),
+(211,'rpt.bir_purchase_register',9,'Input VAT / Purchases Register','report','BIR Reports',2110,1,NULL),
+(212,'rpt.bir_cvat_withheld',9,'Creditable VAT Withheld Schedule (2550Q Schedule 3)','report','BIR Reports',2120,1,NULL),
+(213,'rpt.bir_2550q',9,'Quarterly VAT Return Worksheet (2550Q)','report','BIR Reports',2130,1,NULL),
+(214,'admin.users',10,'User Accounts','admin','Setup',2140,1,NULL),
+(215,'admin.roles',10,'User Role Configuration','admin','Setup',2150,1,NULL),
+(216,'admin.page_access',10,'Page Access Configuration','admin','Setup',2160,1,NULL),
+(217,'admin.effective_access',10,'Effective Access (View as User)','admin','Setup',2170,1,NULL),
+(218,'admin.settings',10,'Company, Security & Closing Date','admin','Setup',2180,1,NULL),
+(219,'admin.utilities',10,'Utilities: Verify & Rebuild Data','admin','Setup',2190,1,NULL),
+(220,'admin.import',10,'Import from CSV','admin','Utilities',2200,1,NULL),
+(221,'admin.backup',10,'Backup & Restore','admin','Utilities',2210,1,NULL),
+(222,'admin.multi_company',10,'Multi-Company Setup','admin','Setup',2220,1,NULL),
+(223,'admin.audit_trail',10,'Audit Trail','report','Audit Reports',2230,1,NULL),
+(224,'admin.txn_history',10,'Transaction History','report','Audit Reports',2240,1,NULL),
+(225,'rpt.voided_deleted_summary',10,'Voided and Deleted Transactions Summary','report','Audit Reports',2250,1,NULL),
+(226,'rpt.voided_deleted_detail',10,'Voided and Deleted Transactions Detail','report','Audit Reports',2260,1,NULL),
+(227,'rpt.user_activity',10,'User Activity','report','Audit Reports',2270,1,NULL),
+(228,'rpt.login_history',10,'Login History','report','Audit Reports',2280,1,NULL),
+(229,'rpt.user_access',10,'User Access and Permission Changes','report','Audit Reports',2290,1,NULL),
+(230,'company.profile',11,'Company Profile & Code','admin','Company',2300,1,NULL),
+(231,'company.users',11,'Employees & Users','admin','Company',2310,1,NULL),
+(232,'company.join_requests',11,'Join Requests','admin','Company',2320,1,NULL),
+(233,'comm.chat',12,'Community Chat','center','Community',2330,1,NULL),
+(234,'comm.inquiries',12,'Questions & Inquiries','center','Community',2340,1,NULL),
+(235,'comm.manage',12,'Community Management','admin','Moderation',2350,1,NULL);
 
--- role_page_access (594 rows)
+-- role_page_access (624 rows)
 INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
-(1,224,1,0,0,0,0,0),
-(1,225,1,0,0,0,0,0),
+(1,233,1,0,0,0,0,0),
+(1,234,1,0,0,0,0,0),
 (2,1,1,0,0,0,1,0),
 (2,2,1,0,0,0,1,0),
 (2,3,1,0,0,0,1,0),
@@ -2550,9 +2630,9 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (2,126,1,0,0,0,1,0),
 (2,127,1,0,0,0,1,0),
 (2,129,1,0,0,0,1,0),
+(2,130,1,0,0,0,1,0),
 (2,131,1,0,0,0,1,0),
-(2,138,1,0,0,0,1,0),
-(2,139,1,0,0,0,1,0),
+(2,133,1,0,0,0,1,0),
 (2,140,1,0,0,0,1,0),
 (2,141,1,0,0,0,1,0),
 (2,142,1,0,0,0,1,0),
@@ -2578,28 +2658,28 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (2,162,1,0,0,0,1,0),
 (2,163,1,0,0,0,1,0),
 (2,164,1,0,0,0,1,0),
+(2,165,1,0,0,0,1,0),
+(2,166,1,0,0,0,1,0),
+(2,167,1,0,0,0,1,0),
+(2,168,1,0,0,0,1,0),
+(2,169,1,0,0,0,1,0),
+(2,170,1,0,0,0,1,0),
+(2,171,1,0,0,0,1,0),
 (2,172,1,0,0,0,1,0),
 (2,173,1,0,0,0,1,0),
-(2,174,1,0,0,0,1,0),
-(2,175,1,0,0,0,1,0),
-(2,176,1,0,0,0,1,0),
-(2,177,1,0,0,0,1,0),
-(2,178,1,0,0,0,1,0),
-(2,179,1,0,0,0,1,0),
-(2,180,1,0,0,0,1,0),
 (2,181,1,0,0,0,1,0),
 (2,182,1,0,0,0,1,0),
 (2,183,1,0,0,0,1,0),
 (2,184,1,0,0,0,1,0),
-(2,185,1,1,1,1,1,0),
-(2,186,1,1,1,1,1,0),
-(2,187,1,1,1,1,1,0),
-(2,188,1,1,1,1,1,0),
-(2,189,1,1,1,1,1,0),
-(2,190,1,1,1,1,1,0),
-(2,191,1,1,1,1,1,0),
-(2,192,1,1,1,1,1,0),
-(2,193,1,1,1,1,1,0),
+(2,185,1,0,0,0,1,0),
+(2,186,1,0,0,0,1,0),
+(2,187,1,0,0,0,1,0),
+(2,188,1,0,0,0,1,0),
+(2,189,1,0,0,0,1,0),
+(2,190,1,0,0,0,1,0),
+(2,191,1,0,0,0,1,0),
+(2,192,1,0,0,0,1,0),
+(2,193,1,0,0,0,1,0),
 (2,194,1,1,1,1,1,0),
 (2,195,1,1,1,1,1,0),
 (2,196,1,1,1,1,1,0),
@@ -2611,9 +2691,18 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (2,202,1,1,1,1,1,0),
 (2,203,1,1,1,1,1,0),
 (2,204,1,1,1,1,1,0),
-(2,210,1,0,0,0,1,0),
-(2,224,1,1,1,1,0,0),
-(2,225,1,1,1,1,0,0),
+(2,205,1,1,1,1,1,0),
+(2,206,1,1,1,1,1,0),
+(2,207,1,1,1,1,1,0),
+(2,208,1,1,1,1,1,0),
+(2,209,1,1,1,1,1,0),
+(2,210,1,1,1,1,1,0),
+(2,211,1,1,1,1,1,0),
+(2,212,1,1,1,1,1,0),
+(2,213,1,1,1,1,1,0),
+(2,219,1,0,0,0,1,0),
+(2,233,1,1,1,1,0,0),
+(2,234,1,1,1,1,0,0),
 (3,1,1,0,0,0,1,0),
 (3,2,1,0,0,0,1,0),
 (3,3,1,0,0,0,1,0),
@@ -2629,7 +2718,8 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (3,63,1,1,1,0,1,0),
 (3,64,1,1,1,0,1,0),
 (3,65,1,1,1,0,1,0),
-(3,66,1,1,1,0,1,0),
+(3,66,1,1,1,0,1,0);
+INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
 (3,67,1,1,1,0,1,0),
 (3,68,1,1,1,0,1,0),
 (3,69,1,1,1,0,1,0),
@@ -2638,8 +2728,7 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (3,72,1,0,0,0,1,0),
 (3,73,1,0,0,0,1,0),
 (3,74,1,0,0,0,1,0),
-(3,75,1,0,0,0,1,0);
-INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
+(3,75,1,0,0,0,1,0),
 (3,76,1,0,0,0,1,0),
 (3,77,1,0,0,0,1,0),
 (3,78,1,0,0,0,1,0),
@@ -2647,8 +2736,11 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (3,80,1,0,0,0,1,0),
 (3,81,1,0,0,0,1,0),
 (3,123,1,0,0,0,0,0),
-(3,224,1,1,1,1,0,0),
-(3,225,1,1,1,1,0,0),
+(3,130,1,0,0,0,1,0),
+(3,148,1,0,0,0,1,0),
+(3,149,1,0,0,0,1,0),
+(3,233,1,1,1,1,0,0),
+(3,234,1,1,1,1,0,0),
 (4,1,1,0,0,0,1,0),
 (4,2,1,0,0,0,1,0),
 (4,3,1,0,0,0,1,0),
@@ -2682,14 +2774,14 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (4,120,1,0,0,0,1,0),
 (4,121,1,0,0,0,1,0),
 (4,123,1,0,0,0,0,0),
-(4,195,1,0,0,0,1,0),
-(4,196,1,0,0,0,0,0),
-(4,197,1,0,0,0,1,0),
-(4,198,1,0,0,0,1,0),
-(4,199,1,0,0,0,1,0),
-(4,200,1,0,0,0,1,0),
-(4,224,1,1,1,1,0,0),
-(4,225,1,1,1,1,0,0),
+(4,204,1,0,0,0,1,0),
+(4,205,1,0,0,0,0,0),
+(4,206,1,0,0,0,1,0),
+(4,207,1,0,0,0,1,0),
+(4,208,1,0,0,0,1,0),
+(4,209,1,0,0,0,1,0),
+(4,233,1,1,1,1,0,0),
+(4,234,1,1,1,1,0,0),
 (5,1,1,0,0,0,1,0),
 (5,2,1,0,0,0,1,0),
 (5,3,1,0,0,0,1,0),
@@ -2710,37 +2802,46 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (5,126,1,1,1,0,1,0),
 (5,127,1,1,1,0,1,0),
 (5,128,1,1,1,0,1,0),
-(5,129,1,1,1,0,1,0),
-(5,130,1,1,1,0,1,0),
+(5,129,1,1,0,0,1,0),
+(5,130,1,0,0,0,1,0),
 (5,131,1,1,1,0,1,0),
-(5,132,1,0,0,0,1,0),
-(5,135,1,0,0,0,1,0),
-(5,136,1,1,0,0,1,0),
-(5,137,1,1,0,0,1,0),
-(5,138,1,0,0,0,1,0),
-(5,139,1,0,0,0,1,0),
+(5,132,1,1,1,0,1,0),
+(5,133,1,1,1,0,1,0),
+(5,134,1,0,0,0,1,0),
+(5,137,1,0,0,0,1,0),
+(5,138,1,1,0,0,1,0),
+(5,139,1,1,0,0,1,0),
 (5,140,1,0,0,0,1,0),
 (5,141,1,0,0,0,1,0),
 (5,142,1,0,0,0,1,0),
 (5,143,1,0,0,0,1,0),
+(5,144,1,0,0,0,1,0),
+(5,145,1,0,0,0,1,0),
+(5,146,1,0,0,0,1,0),
+(5,147,1,0,0,0,1,0),
+(5,148,1,0,0,0,1,0);
+INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
+(5,149,1,0,0,0,1,0),
 (5,150,1,0,0,0,1,0),
 (5,151,1,0,0,0,1,0),
 (5,152,1,0,0,0,1,0),
-(5,153,1,0,0,0,1,0),
-(5,154,1,0,0,0,1,0),
-(5,155,1,0,0,0,1,0),
-(5,156,1,0,0,0,1,0),
-(5,158,1,0,0,0,1,0),
 (5,159,1,0,0,0,1,0),
 (5,160,1,0,0,0,1,0),
+(5,161,1,0,0,0,1,0),
 (5,162,1,0,0,0,1,0),
 (5,163,1,0,0,0,1,0),
 (5,164,1,0,0,0,1,0),
-(5,224,1,1,1,1,0,0),
-(5,225,1,1,1,1,0,0),
+(5,165,1,0,0,0,1,0),
+(5,167,1,0,0,0,1,0),
+(5,168,1,0,0,0,1,0),
+(5,169,1,0,0,0,1,0),
+(5,171,1,0,0,0,1,0),
+(5,172,1,0,0,0,1,0),
+(5,173,1,0,0,0,1,0),
+(5,233,1,1,1,1,0,0),
+(5,234,1,1,1,1,0,0),
 (6,1,1,0,0,0,1,0),
-(6,2,1,0,0,0,1,0);
-INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
+(6,2,1,0,0,0,1,0),
 (6,3,1,0,0,0,1,0),
 (6,4,1,0,0,0,1,0),
 (6,5,1,0,0,0,1,0),
@@ -2766,41 +2867,41 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (6,94,1,0,0,0,1,0),
 (6,95,1,0,0,0,1,0),
 (6,96,1,0,0,0,1,0),
-(6,135,1,0,0,0,1,0),
-(6,138,1,0,0,0,1,0),
-(6,139,1,0,0,0,1,0),
-(6,164,1,0,0,0,1,0),
-(6,224,1,1,1,1,0,0),
-(6,225,1,1,1,1,0,0),
+(6,137,1,0,0,0,1,0),
+(6,140,1,0,0,0,1,0),
+(6,141,1,0,0,0,1,0),
+(6,173,1,0,0,0,1,0),
+(6,233,1,1,1,1,0,0),
+(6,234,1,1,1,1,0,0),
 (7,1,1,0,0,0,0,0),
-(7,165,1,1,0,0,1,0),
-(7,167,1,1,0,0,1,0),
-(7,168,1,1,0,1,1,0),
-(7,183,1,0,0,0,1,0),
-(7,224,1,1,1,1,0,0),
-(7,225,1,1,1,1,0,0),
+(7,174,1,1,0,0,1,0),
+(7,176,1,1,0,0,1,0),
+(7,177,1,1,0,1,1,0),
+(7,192,1,0,0,0,1,0),
+(7,233,1,1,1,1,0,0),
+(7,234,1,1,1,1,0,0),
 (8,1,1,0,0,0,0,0),
 (8,2,1,0,0,0,0,0),
-(8,165,1,1,1,1,1,1),
-(8,167,1,1,1,1,1,1),
-(8,168,1,1,1,1,1,1),
-(8,169,1,1,1,1,1,1),
-(8,170,1,0,0,0,1,0),
-(8,172,1,0,0,0,1,0),
-(8,173,1,0,0,0,1,0),
-(8,174,1,0,0,0,1,0),
-(8,175,1,0,0,0,1,0),
-(8,176,1,0,0,0,1,0),
-(8,177,1,0,0,0,1,0),
-(8,178,1,0,0,0,1,0),
+(8,174,1,1,1,1,1,1),
+(8,176,1,1,1,1,1,1),
+(8,177,1,1,1,1,1,1),
+(8,178,1,1,1,1,1,1),
 (8,179,1,0,0,0,1,0),
-(8,180,1,0,0,0,1,0),
 (8,181,1,0,0,0,1,0),
 (8,182,1,0,0,0,1,0),
 (8,183,1,0,0,0,1,0),
 (8,184,1,0,0,0,1,0),
-(8,224,1,1,1,1,0,0),
-(8,225,1,1,1,1,0,0),
+(8,185,1,0,0,0,1,0),
+(8,186,1,0,0,0,1,0),
+(8,187,1,0,0,0,1,0),
+(8,188,1,0,0,0,1,0),
+(8,189,1,0,0,0,1,0),
+(8,190,1,0,0,0,1,0),
+(8,191,1,0,0,0,1,0),
+(8,192,1,0,0,0,1,0),
+(8,193,1,0,0,0,1,0),
+(8,233,1,1,1,1,0,0),
+(8,234,1,1,1,1,0,0),
 (9,1,1,0,0,0,0,0),
 (9,2,1,0,0,0,0,0),
 (9,97,1,0,0,0,1,0),
@@ -2810,20 +2911,21 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (9,110,1,1,1,0,1,0),
 (9,111,1,0,0,0,1,0),
 (9,122,1,0,0,0,1,0),
-(9,135,1,0,0,0,1,0),
-(9,138,1,0,0,0,1,0),
-(9,139,1,0,0,0,1,0),
+(9,137,1,0,0,0,1,0),
 (9,140,1,0,0,0,1,0),
 (9,141,1,0,0,0,1,0),
 (9,142,1,0,0,0,1,0),
 (9,143,1,0,0,0,1,0),
-(9,224,1,1,1,1,0,0),
-(9,225,1,1,1,1,0,0),
-(10,1,1,0,0,0,0,0),
+(9,144,1,0,0,0,1,0),
+(9,152,1,0,0,0,1,0),
+(9,233,1,1,1,1,0,0),
+(9,234,1,1,1,1,0,0),
+(10,1,1,0,0,0,0,0);
+INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
 (10,109,1,1,1,0,0,0),
-(10,135,1,0,0,0,1,0),
-(10,224,1,1,1,1,0,0),
-(10,225,1,1,1,1,0,0),
+(10,137,1,0,0,0,1,0),
+(10,233,1,1,1,1,0,0),
+(10,234,1,1,1,1,0,0),
 (11,1,1,0,0,0,1,0),
 (11,2,1,0,0,0,1,0),
 (11,3,1,0,0,0,1,0),
@@ -2840,8 +2942,7 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (11,14,1,0,0,0,1,0),
 (11,15,1,0,0,0,1,0),
 (11,16,1,0,0,0,1,0),
-(11,17,1,0,0,0,1,0);
-INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
+(11,17,1,0,0,0,1,0),
 (11,18,1,0,0,0,1,0),
 (11,19,1,0,0,0,1,0),
 (11,20,1,0,0,0,1,0),
@@ -2920,7 +3021,8 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (11,93,1,0,0,0,1,0),
 (11,94,1,0,0,0,1,0),
 (11,95,1,0,0,0,1,0),
-(11,96,1,0,0,0,1,0),
+(11,96,1,0,0,0,1,0);
+INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
 (11,97,1,0,0,0,1,0),
 (11,98,1,0,0,0,1,0),
 (11,99,1,0,0,0,1,0),
@@ -2941,8 +3043,7 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (11,114,1,0,0,0,1,0),
 (11,115,1,0,0,0,1,0),
 (11,116,1,0,0,0,1,0),
-(11,117,1,0,0,0,1,0);
-INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
+(11,117,1,0,0,0,1,0),
 (11,118,1,0,0,0,1,0),
 (11,119,1,0,0,0,1,0),
 (11,120,1,0,0,0,1,0),
@@ -2990,16 +3091,16 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (11,162,1,0,0,0,1,0),
 (11,163,1,0,0,0,1,0),
 (11,164,1,0,0,0,1,0),
+(11,165,1,0,0,0,1,0),
 (11,166,1,0,0,0,1,0),
+(11,167,1,0,0,0,1,0),
 (11,168,1,0,0,0,1,0),
 (11,169,1,0,0,0,1,0),
 (11,170,1,0,0,0,1,0),
 (11,171,1,0,0,0,1,0),
 (11,172,1,0,0,0,1,0),
 (11,173,1,0,0,0,1,0),
-(11,174,1,0,0,0,1,0),
 (11,175,1,0,0,0,1,0),
-(11,176,1,0,0,0,1,0),
 (11,177,1,0,0,0,1,0),
 (11,178,1,0,0,0,1,0),
 (11,179,1,0,0,0,1,0),
@@ -3021,22 +3122,32 @@ INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_
 (11,195,1,0,0,0,1,0),
 (11,196,1,0,0,0,1,0),
 (11,197,1,0,0,0,1,0),
-(11,198,1,0,0,0,1,0),
+(11,198,1,0,0,0,1,0);
+INSERT INTO `role_page_access` (`role_id`,`page_id`,`allowed`,`can_create`,`can_edit`,`can_delete`,`can_print`,`can_approve`) VALUES
 (11,199,1,0,0,0,1,0),
 (11,200,1,0,0,0,1,0),
 (11,201,1,0,0,0,1,0),
 (11,202,1,0,0,0,1,0),
 (11,203,1,0,0,0,1,0),
 (11,204,1,0,0,0,1,0),
-(11,214,1,0,0,0,1,0),
-(11,215,1,0,0,0,1,0),
-(11,216,1,0,0,0,1,0),
-(11,217,1,0,0,0,1,0),
-(11,218,1,0,0,0,1,0),
-(11,219,1,0,0,0,1,0),
-(11,220,1,0,0,0,1,0),
+(11,205,1,0,0,0,1,0),
+(11,206,1,0,0,0,1,0),
+(11,207,1,0,0,0,1,0),
+(11,208,1,0,0,0,1,0),
+(11,209,1,0,0,0,1,0),
+(11,210,1,0,0,0,1,0),
+(11,211,1,0,0,0,1,0),
+(11,212,1,0,0,0,1,0),
+(11,213,1,0,0,0,1,0),
+(11,223,1,0,0,0,1,0),
 (11,224,1,0,0,0,1,0),
-(11,225,1,0,0,0,1,0);
+(11,225,1,0,0,0,1,0),
+(11,226,1,0,0,0,1,0),
+(11,227,1,0,0,0,1,0),
+(11,228,1,0,0,0,1,0),
+(11,229,1,0,0,0,1,0),
+(11,233,1,0,0,0,1,0),
+(11,234,1,0,0,0,1,0);
 
 -- role_special_permissions (37 rows)
 INSERT INTO `role_special_permissions` (`role_id`,`perm_key`,`perm_value`) VALUES
@@ -3078,11 +3189,16 @@ INSERT INTO `role_special_permissions` (`role_id`,`perm_key`,`perm_value`) VALUE
 (11,'view_bank_balances','1'),
 (11,'view_costs','1');
 
--- audit_trail (1 rows)
+-- audit_trail (6 rows)
 INSERT INTO `audit_trail` (`id`,`created_at`,`user_id`,`username`,`user_roles`,`ip_address`,`workstation`,`site_id`,`terminal_id`,`module`,`page_key`,`action`,`record_type`,`record_id`,`record_ref`,`amount`,`changes`,`snapshot`,`reason`,`approved_by`) VALUES
-(1,'2026-11-22 19:15:55',1,'admin','Administrator','cli','CLI',NULL,NULL,'admin','admin.multi_company','multi_company_setup','company',1,'Your Company Name',NULL,NULL,NULL,'Registered as Company 1 of the platform. Company Owner: admin. Super Admin: superadmin.',NULL);
+(1,'2026-11-22 22:16:26',NULL,NULL,NULL,'cli','CLI',NULL,NULL,'cust','coa.lists','create','customer',1,'Maria Santos',NULL,NULL,NULL,'The employee as a customer, for the shortages charged to Maria Santos (Sales representative)',NULL),
+(2,'2026-11-22 22:16:26',NULL,NULL,NULL,'cli','CLI',NULL,NULL,'cust','coa.lists','create','customer',2,'Jose Reyes',NULL,NULL,NULL,'The employee as a customer, for the shortages charged to Jose Reyes (Sales representative)',NULL),
+(3,'2026-11-22 22:16:26',NULL,NULL,NULL,'cli','CLI',NULL,NULL,'cust','coa.lists','create','customer',3,'Rico Mendoza',NULL,NULL,NULL,'The employee as a customer, for the shortages charged to Rico Mendoza (Van salesman)',NULL),
+(4,'2026-11-22 22:16:26',NULL,NULL,NULL,'cli','CLI',NULL,NULL,'cust','coa.lists','create','customer',4,'Arnel Cruz',NULL,NULL,NULL,'The employee as a customer, for the shortages charged to Arnel Cruz (Van salesman)',NULL),
+(5,'2026-11-22 22:16:26',NULL,NULL,NULL,'cli','CLI',NULL,NULL,'cust','coa.lists','create','customer',5,'Ella Ramos',NULL,NULL,NULL,'The employee as a customer, for the shortages charged to Ella Ramos (Cashier)',NULL),
+(6,'2026-11-22 22:16:26',1,'admin','Administrator','cli','CLI',NULL,NULL,'admin','admin.multi_company','multi_company_setup','company',1,'Your Company Name',NULL,NULL,NULL,'Registered as Company 1 of the platform. Company Owner: admin. Super Admin: superadmin.',NULL);
 
--- sequences (28 rows)
+-- sequences (30 rows)
 INSERT INTO `sequences` (`seq_key`,`prefix`,`next_no`,`pad`) VALUES
 ('adjustment','ADJ-',1,5),
 ('advance_apply','AAP-',1,5),
@@ -3109,119 +3225,123 @@ INSERT INTO `sequences` (`seq_key`,`prefix`,`next_no`,`pad`) VALUES
 ('purchase_order','PO-',1,5),
 ('sales_order','SO-',1,5),
 ('sales_receipt','SR-',1,5),
+('shortage','SHC-',1,5),
 ('statement_charge','SC-',1,5),
 ('transfer','TRF-',1,5),
+('transfer_closing','TC-',1,5),
 ('vendor_advance','ADV-',1,5);
 
--- accounts (72 rows)
+-- accounts (73 rows)
 INSERT INTO `accounts` (`id`,`code`,`name`,`account_type`,`category`,`normal_balance`,`parent_id`,`description`,`bank_account_no`,`with_sl`,`is_active`,`is_system`,`created_at`,`updated_at`) VALUES
-(1,'1000','Cash','Bank','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(2,'1001','Cash on Hand - Store Registers','Bank','Asset','Debit',1,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(3,'1005','Petty Cash Fund','Bank','Asset','Debit',1,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(4,'1006','Revolving Fund','Bank','Asset','Debit',1,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(5,'1010','Cash in Bank - BDO Checking','Bank','Asset','Debit',1,NULL,'0012-3456-7890',0,1,0,'2026-11-22 19:15:54',NULL),
-(6,'1020','Cash in Bank - BPI Savings','Bank','Asset','Debit',1,NULL,'1234-5678-90',0,1,0,'2026-11-22 19:15:54',NULL),
-(7,'1050','Undeposited Funds','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(8,'1060','Card Clearing','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(9,'1065','E-wallet Clearing','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(10,'1070','P.O. Card Clearing','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(11,'1100','Accounts Receivable','Accounts Receivable','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(12,'1150','Allowance for Doubtful Accounts','Other Current Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(13,'1200','Inventory','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(14,'1300','Input Tax','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(15,'1310','Creditable Withholding Tax','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(16,'1315','Creditable VAT Withheld','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(17,'1400','Prepaid Expenses','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(18,'1410','Advances to Suppliers','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(19,'1500','Land','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(20,'1510','Building','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(21,'1515','Accumulated Depreciation - Building','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(22,'1520','Machinery and Equipment','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(23,'1525','Accumulated Depreciation - Machinery','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(24,'1530','Transportation Equipment','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(25,'1535','Accumulated Depreciation - Transportation','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(26,'1540','Furniture and Fixtures','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(27,'1545','Accumulated Depreciation - Furniture','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(28,'1550','Computer and POS Equipment','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(29,'1555','Accumulated Depreciation - Computer and POS','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(30,'1600','Security Deposits','Other Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(31,'2000','Accounts Payable','Accounts Payable','Liability','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(32,'2050','Company Credit Card','Credit Card','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(33,'2100','Output Tax','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(34,'2110','Withholding Tax Payable','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(35,'2115','VAT Withheld Payable','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(36,'2120','Gift Vouchers Outstanding','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(37,'2130','Customer Deposits','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(38,'2200','Accrued Expenses','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(39,'2500','Loans Payable','Long Term Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(40,'3000','Owner\'s Capital','Equity','Equity','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(41,'3100','Owner\'s Drawings','Equity','Equity','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(42,'3200','Retained Earnings','Equity','Equity','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(43,'3900','Opening Balance Equity','Equity','Equity','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 19:15:54',NULL),
-(44,'4000','Sales','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(45,'4010','Service Income','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(46,'4020','Delivery Income','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(47,'4050','Sales Returns and Allowances','Income','Income','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(48,'4060','Sales Discounts','Income','Income','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(49,'4070','Item Group Price Variance','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(50,'4110','Reimbursable Expense Income','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(51,'4100','Finance Charge Income','Other Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(52,'4200','Interest Income','Other Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(53,'4300','Gain (Loss) on Disposal of Assets','Other Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(54,'5000','Cost of Goods Sold','Cost of Goods Sold','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(55,'5050','Purchase Discounts','Cost of Goods Sold','Expense','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(56,'5100','Inventory Adjustments and Shrinkage','Cost of Goods Sold','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(57,'5200','Direct Labor Absorbed','Cost of Goods Sold','Expense','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(58,'6000','Salaries and Wages','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(59,'6010','Rent Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(60,'6020','Utilities Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(61,'6030','Repairs and Maintenance','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(62,'6040','Office Supplies Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(63,'6050','Fuel and Oil','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(64,'6060','Meals and Representation','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(65,'6070','Professional Fees','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(66,'6080','Bank and Merchant Charges','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(67,'6090','Depreciation Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(68,'6100','Freight and Delivery','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(69,'6110','Purchases - Non-inventory','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(70,'6200','Cash Over and Short','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(71,'6900','Miscellaneous Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL),
-(72,'7000','Interest Expense','Other Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 19:15:54',NULL);
+(1,'1000','Cash','Bank','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(2,'1001','Cash on Hand - Store Registers','Bank','Asset','Debit',1,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(3,'1005','Petty Cash Fund','Bank','Asset','Debit',1,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(4,'1006','Revolving Fund','Bank','Asset','Debit',1,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(5,'1010','Cash in Bank - BDO Checking','Bank','Asset','Debit',1,NULL,'0012-3456-7890',0,1,0,'2026-11-22 22:16:25',NULL),
+(6,'1020','Cash in Bank - BPI Savings','Bank','Asset','Debit',1,NULL,'1234-5678-90',0,1,0,'2026-11-22 22:16:25',NULL),
+(7,'1050','Undeposited Funds','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(8,'1060','Card Clearing','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(9,'1065','E-wallet Clearing','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(10,'1070','P.O. Card Clearing','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(11,'1100','Accounts Receivable','Accounts Receivable','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(12,'1120','Shortage Receivable - Employees','Accounts Receivable','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(13,'1150','Allowance for Doubtful Accounts','Other Current Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(14,'1200','Inventory','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(15,'1300','Input Tax','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(16,'1310','Creditable Withholding Tax','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(17,'1315','Creditable VAT Withheld','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(18,'1400','Prepaid Expenses','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(19,'1410','Advances to Suppliers','Other Current Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(20,'1500','Land','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(21,'1510','Building','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(22,'1515','Accumulated Depreciation - Building','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(23,'1520','Machinery and Equipment','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(24,'1525','Accumulated Depreciation - Machinery','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(25,'1530','Transportation Equipment','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(26,'1535','Accumulated Depreciation - Transportation','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(27,'1540','Furniture and Fixtures','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(28,'1545','Accumulated Depreciation - Furniture','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(29,'1550','Computer and POS Equipment','Fixed Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(30,'1555','Accumulated Depreciation - Computer and POS','Fixed Asset','Asset','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(31,'1600','Security Deposits','Other Asset','Asset','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(32,'2000','Accounts Payable','Accounts Payable','Liability','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(33,'2050','Company Credit Card','Credit Card','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(34,'2100','Output Tax','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(35,'2110','Withholding Tax Payable','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(36,'2115','VAT Withheld Payable','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(37,'2120','Gift Vouchers Outstanding','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(38,'2130','Customer Deposits','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(39,'2200','Accrued Expenses','Other Current Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(40,'2500','Loans Payable','Long Term Liability','Liability','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(41,'3000','Owner\'s Capital','Equity','Equity','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(42,'3100','Owner\'s Drawings','Equity','Equity','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(43,'3200','Retained Earnings','Equity','Equity','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(44,'3900','Opening Balance Equity','Equity','Equity','Credit',NULL,NULL,NULL,0,1,1,'2026-11-22 22:16:25',NULL),
+(45,'4000','Sales','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(46,'4010','Service Income','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(47,'4020','Delivery Income','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(48,'4050','Sales Returns and Allowances','Income','Income','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(49,'4060','Sales Discounts','Income','Income','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(50,'4070','Item Group Price Variance','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(51,'4110','Reimbursable Expense Income','Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(52,'4100','Finance Charge Income','Other Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(53,'4200','Interest Income','Other Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(54,'4300','Gain (Loss) on Disposal of Assets','Other Income','Income','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(55,'5000','Cost of Goods Sold','Cost of Goods Sold','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(56,'5050','Purchase Discounts','Cost of Goods Sold','Expense','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(57,'5100','Inventory Adjustments and Shrinkage','Cost of Goods Sold','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(58,'5200','Direct Labor Absorbed','Cost of Goods Sold','Expense','Credit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(59,'6000','Salaries and Wages','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(60,'6010','Rent Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(61,'6020','Utilities Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(62,'6030','Repairs and Maintenance','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(63,'6040','Office Supplies Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(64,'6050','Fuel and Oil','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(65,'6060','Meals and Representation','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(66,'6070','Professional Fees','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(67,'6080','Bank and Merchant Charges','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(68,'6090','Depreciation Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(69,'6100','Freight and Delivery','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(70,'6110','Purchases - Non-inventory','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(71,'6200','Cash Over and Short','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(72,'6900','Miscellaneous Expense','Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL),
+(73,'7000','Interest Expense','Other Expense','Expense','Debit',NULL,NULL,NULL,0,1,0,'2026-11-22 22:16:25',NULL);
 
--- default_accounts (32 rows)
+-- default_accounts (33 rows)
 INSERT INTO `default_accounts` (`setting_key`,`label`,`module`,`account_id`) VALUES
-('ap','Accounts Payable','vend',31),
+('ap','Accounts Payable','vend',32),
 ('ar','Accounts Receivable','cust',11),
 ('card_clearing','Card Clearing','pos',8),
 ('cash_on_hand','Cash on Hand (Register)','pos',2),
-('cash_over_short','Cash Over and Short','pos',70),
-('cogs','Cost of Goods Sold','inv',54),
-('cvat_withheld','Creditable VAT Withheld','cust',16),
-('cwt','Creditable Withholding Tax','cust',15),
-('default_expense','Default Purchases / Expense','vend',69),
+('cash_over_short','Cash Over and Short','pos',71),
+('cogs','Cost of Goods Sold','inv',55),
+('cvat_withheld','Creditable VAT Withheld','cust',17),
+('cwt','Creditable Withholding Tax','cust',16),
+('default_expense','Default Purchases / Expense','vend',70),
 ('ewallet_clearing','E-wallet Clearing','pos',9),
-('finance_charge_income','Finance Charge Income','cust',51),
-('gain_loss_disposal','Gain / Loss on Disposal of Assets','fa',53),
-('group_price_variance','Item Group Price Variance','inv',49),
-('input_tax','Input Tax','vend',14),
-('interest_income','Interest Income','bank',52),
-('inventory_adjustment','Inventory Adjustment (Shrinkage)','inv',56),
-('inventory_asset','Inventory Asset','inv',13),
-('merchant_fees','Bank / Merchant Charges','bank',66),
-('opening_equity','Opening Balance Equity','coa',43),
-('output_tax','Output Tax','cust',33),
-('processing_absorbed','Processing Labor & Overhead Absorbed','inv',57),
-('processing_variance','Processing / Disassembly Variance','inv',56),
-('purchase_discounts','Purchase Discounts','vend',55),
-('reimbursable_income','Reimbursable Expense Income','cust',50),
-('retained_earnings','Retained Earnings','coa',42),
-('sales_discounts','Sales Discounts','cust',48),
-('sales_income','Default Sales Income','cust',44),
-('sales_returns','Sales Returns and Allowances','cust',47),
+('finance_charge_income','Finance Charge Income','cust',52),
+('gain_loss_disposal','Gain / Loss on Disposal of Assets','fa',54),
+('group_price_variance','Item Group Price Variance','inv',50),
+('input_tax','Input Tax','vend',15),
+('interest_income','Interest Income','bank',53),
+('inventory_adjustment','Inventory Adjustment (Shrinkage)','inv',57),
+('inventory_asset','Inventory Asset','inv',14),
+('merchant_fees','Bank / Merchant Charges','bank',67),
+('opening_equity','Opening Balance Equity','coa',44),
+('output_tax','Output Tax','cust',34),
+('processing_absorbed','Processing Labor & Overhead Absorbed','inv',58),
+('processing_variance','Processing / Disassembly Variance','inv',57),
+('purchase_discounts','Purchase Discounts','vend',56),
+('reimbursable_income','Reimbursable Expense Income','cust',51),
+('retained_earnings','Retained Earnings','coa',43),
+('sales_discounts','Sales Discounts','cust',49),
+('sales_income','Default Sales Income','cust',45),
+('sales_returns','Sales Returns and Allowances','cust',48),
+('shortage_receivable','Shortage Receivable (Employees)','inv',12),
 ('undeposited_funds','Undeposited Funds','cust',7),
-('vat_withheld_payable','VAT Withheld Payable','vend',35),
-('vendor_advances','Advances to Suppliers','vend',18),
-('wht_payable','Withholding Tax Payable (Expanded)','vend',34);
+('vat_withheld_payable','VAT Withheld Payable','vend',36),
+('vendor_advances','Advances to Suppliers','vend',19),
+('wht_payable','Withholding Tax Payable (Expanded)','vend',35);
 
 -- terms (5 rows)
 INSERT INTO `terms` (`id`,`name`,`net_days`,`discount_pct`,`discount_days`,`is_active`) VALUES
@@ -3233,10 +3353,10 @@ INSERT INTO `terms` (`id`,`name`,`net_days`,`discount_pct`,`discount_days`,`is_a
 
 -- tax_codes (4 rows)
 INSERT INTO `tax_codes` (`id`,`code`,`name`,`rate`,`sales_account_id`,`purchase_account_id`,`is_active`) VALUES
-(1,'VAT12','VAT 12%','12.000',33,14,1),
-(2,'ZR','Zero-rated','0.000',33,14,1),
-(3,'EX','VAT-exempt','0.000',33,14,1),
-(4,'NT','Non-taxable','0.000',33,14,1);
+(1,'VAT12','VAT 12%','12.000',34,15,1),
+(2,'ZR','Zero-rated','0.000',34,15,1),
+(3,'EX','VAT-exempt','0.000',34,15,1),
+(4,'NT','Non-taxable','0.000',34,15,1);
 
 -- payment_methods (9 rows)
 INSERT INTO `payment_methods` (`id`,`name`,`method_type`,`clearing_account_id`,`is_active`,`show_in_pos`) VALUES
@@ -3246,7 +3366,7 @@ INSERT INTO `payment_methods` (`id`,`name`,`method_type`,`clearing_account_id`,`
 (4,'GCash','ewallet',9,1,1),
 (5,'Maya','ewallet',9,1,1),
 (6,'Bank Transfer','bank_transfer',NULL,1,0),
-(7,'Gift Voucher','voucher',36,1,1),
+(7,'Gift Voucher','voucher',37,1,1),
 (8,'P.O. Card','card',10,1,1),
 (9,'Bank','bank_transfer',5,1,1);
 
@@ -3263,29 +3383,33 @@ INSERT INTO `price_levels` (`id`,`name`,`adjust_pct`,`is_active`) VALUES
 (9,'Price Level 9','0.00',1),
 (10,'Price Level 10','0.00',1);
 
--- sales_reps (1 rows)
-INSERT INTO `sales_reps` (`id`,`name`,`initials`,`user_id`,`commission_pct`,`is_active`) VALUES
-(1,'Maria Santos','MS',7,'1.50',1);
+-- sales_reps (2 rows)
+INSERT INTO `sales_reps` (`id`,`name`,`initials`,`user_id`,`commission_pct`,`rep_type`,`customer_id`,`is_active`) VALUES
+(1,'Maria Santos','MS',7,'1.50','sales_rep',NULL,1),
+(2,'Ella Ramos','ER',9,'0.00','cashier',NULL,1);
 
--- customer_types (5 rows)
+-- customer_types (6 rows)
 INSERT INTO `customer_types` (`id`,`name`) VALUES
 (1,'Supermarket'),
 (2,'Restaurant'),
 (3,'Market Retailer'),
 (4,'Institution'),
-(5,'Government');
+(5,'Government'),
+(6,'Employee');
 
 -- billing_groups (1 rows)
 INSERT INTO `billing_groups` (`id`,`name`) VALUES
 (1,'Weekly Delivery Accounts');
 
--- sites (5 rows)
-INSERT INTO `sites` (`id`,`code`,`name`,`site_type`,`address`,`is_active`) VALUES
-(1,'NGA','Naga Cold Storage','warehouse',NULL,1),
-(2,'NOT','Naga Outlet','store',NULL,1),
-(3,'LGZ','Legazpi Depot','store',NULL,1),
-(4,'RFT1','Reefer Truck 1','van',NULL,1),
-(5,'DMG','Spoilage and Damaged','damaged',NULL,1);
+-- sites (7 rows)
+INSERT INTO `sites` (`id`,`code`,`name`,`site_type`,`address`,`sales_rep_id`,`is_active`) VALUES
+(1,'NGA','Naga Cold Storage','warehouse',NULL,NULL,1),
+(2,'NOT','Naga Outlet','store',NULL,2,1),
+(3,'LGZ','Legazpi Depot','store',NULL,NULL,1),
+(4,'RFT1','Reefer Truck 1','van',NULL,NULL,1),
+(5,'DMG','Spoilage and Damaged','damaged',NULL,NULL,1),
+(6,'VAN1','Van Store 1 (LAB 4417)','van',NULL,NULL,1),
+(7,'VAN2','Van Store 2 (LAB 4428)','van',NULL,NULL,1);
 
 -- item_categories (8 rows)
 INSERT INTO `item_categories` (`id`,`name`) VALUES
@@ -3300,12 +3424,12 @@ INSERT INTO `item_categories` (`id`,`name`) VALUES
 
 -- uom_sets (6 rows)
 INSERT INTO `uom_sets` (`id`,`name`,`uom_kind`,`base_unit`,`is_active`,`created_at`,`updated_at`) VALUES
-(1,'Kilos and crates','weight','kg',1,'2026-11-22 19:15:54',NULL),
-(2,'Packs and crates','count','pack',1,'2026-11-22 19:15:54',NULL),
-(3,'Kilos','weight','kg',1,'2026-11-22 19:15:54',NULL),
-(4,'Piece','count','pc',1,'2026-11-22 19:15:54',NULL),
-(5,'Volume (L)','volume','L',1,'2026-11-22 19:15:54',NULL),
-(6,'Time (hour)','time','hr',1,'2026-11-22 19:15:54',NULL);
+(1,'Kilos and crates','weight','kg',1,'2026-11-22 22:16:25',NULL),
+(2,'Packs and crates','count','pack',1,'2026-11-22 22:16:25',NULL),
+(3,'Kilos','weight','kg',1,'2026-11-22 22:16:25',NULL),
+(4,'Piece','count','pc',1,'2026-11-22 22:16:25',NULL),
+(5,'Volume (L)','volume','L',1,'2026-11-22 22:16:25',NULL),
+(6,'Time (hour)','time','hr',1,'2026-11-22 22:16:25',NULL);
 
 -- uom_units (17 rows)
 INSERT INTO `uom_units` (`id`,`set_id`,`code`,`name`,`factor`,`is_base`,`is_sales_default`,`is_purchase_default`,`sort_order`,`is_variable`) VALUES
@@ -3329,18 +3453,18 @@ INSERT INTO `uom_units` (`id`,`set_id`,`code`,`name`,`factor`,`is_base`,`is_sale
 
 -- withholding_taxes (3 rows)
 INSERT INTO `withholding_taxes` (`id`,`code`,`atc`,`name`,`tax_kind`,`rate`,`base_type`,`applies_to`,`payable_account_id`,`receivable_account_id`,`description`,`sort_order`,`is_active`,`created_at`,`updated_at`) VALUES
-(1,'WT-GOODS','WC158','WT on Goods','income','1.0000','net_of_vat','both',NULL,NULL,'Goods bought from regular suppliers by government payors and top withholding agents (RR 11-2018)',10,1,'2026-11-22 19:15:54',NULL),
-(2,'WT-SERVICES','WC160','WT on Services','income','2.0000','net_of_vat','both',NULL,NULL,'Services bought from regular suppliers by government payors and top withholding agents (RR 11-2018)',20,1,'2026-11-22 19:15:54',NULL),
-(3,'WT-VAT','WV010','WT on VAT','vat','5.0000','net_of_vat','both',NULL,NULL,'Creditable VAT withheld by government buyers on VATable purchases (5% of the VAT-exclusive payment)',30,1,'2026-11-22 19:15:54',NULL);
+(1,'WT-GOODS','WC158','WT on Goods','income','1.0000','net_of_vat','both',NULL,NULL,'Goods bought from regular suppliers by government payors and top withholding agents (RR 11-2018)',10,1,'2026-11-22 22:16:25',NULL),
+(2,'WT-SERVICES','WC160','WT on Services','income','2.0000','net_of_vat','both',NULL,NULL,'Services bought from regular suppliers by government payors and top withholding agents (RR 11-2018)',20,1,'2026-11-22 22:16:25',NULL),
+(3,'WT-VAT','WV010','WT on VAT','vat','5.0000','net_of_vat','both',NULL,NULL,'Creditable VAT withheld by government buyers on VATable purchases (5% of the VAT-exclusive payment)',30,1,'2026-11-22 22:16:25',NULL);
 
 -- asset_categories (6 rows)
 INSERT INTO `asset_categories` (`id`,`name`,`asset_account_id`,`accum_dep_account_id`,`dep_expense_account_id`,`default_method`,`default_life_years`,`is_active`) VALUES
-(1,'Buildings',20,21,67,'straight_line','25.00',1),
-(2,'Machinery and Equipment',22,23,67,'straight_line','5.00',1),
-(3,'Production Machinery (usage-based)',22,23,67,'units_of_production','5.00',1),
-(4,'Transportation Equipment',24,25,67,'declining_balance','5.00',1),
-(5,'Furniture and Fixtures',26,27,67,'straight_line','10.00',1),
-(6,'Computer and POS Equipment',28,29,67,'declining_balance','3.00',1);
+(1,'Buildings',21,22,68,'straight_line','25.00',1),
+(2,'Machinery and Equipment',23,24,68,'straight_line','5.00',1),
+(3,'Production Machinery (usage-based)',23,24,68,'units_of_production','5.00',1),
+(4,'Transportation Equipment',25,26,68,'declining_balance','5.00',1),
+(5,'Furniture and Fixtures',27,28,68,'straight_line','10.00',1),
+(6,'Computer and POS Equipment',29,30,68,'declining_balance','3.00',1);
 
 -- pos_terminals (2 rows)
 INSERT INTO `pos_terminals` (`id`,`code`,`name`,`site_id`,`cash_account_id`,`receipt_prefix`,`next_receipt_no`,`next_z_no`,`is_active`,`class_id`) VALUES
@@ -3364,12 +3488,12 @@ INSERT INTO `user_terminals` (`user_id`,`terminal_id`) VALUES
 
 -- community_channels (6 rows)
 INSERT INTO `community_channels` (`id`,`slug`,`name`,`description`,`kind`,`post_policy`,`is_restricted`,`is_archived`,`sort_order`,`created_by`,`created_at`,`updated_at`) VALUES
-(1,'general','General Discussion','Everyday conversations and community interactions.','chat','everyone',0,0,10,NULL,'2026-11-22 19:15:55',NULL),
-(2,'questions','Questions and Inquiries','General questions that need answers.','chat','everyone',0,0,20,NULL,'2026-11-22 19:15:55',NULL),
-(3,'help','Help and Support','Help with the system, your account or a technical problem.','chat','everyone',0,0,30,NULL,'2026-11-22 19:15:55',NULL),
-(4,'announcements','Announcements','Important updates from the administrators.','announcement','moderators',0,0,40,NULL,'2026-11-22 19:15:55',NULL),
-(5,'suggestions','Suggestions and Feedback','Recommendations and requests for improvement.','chat','everyone',0,0,50,NULL,'2026-11-22 19:15:55',NULL),
-(6,'concerns','Community Concerns','Questions and concerns that can be discussed openly.','chat','everyone',0,0,60,NULL,'2026-11-22 19:15:55',NULL);
+(1,'general','General Discussion','Everyday conversations and community interactions.','chat','everyone',0,0,10,NULL,'2026-11-22 22:16:26',NULL),
+(2,'questions','Questions and Inquiries','General questions that need answers.','chat','everyone',0,0,20,NULL,'2026-11-22 22:16:26',NULL),
+(3,'help','Help and Support','Help with the system, your account or a technical problem.','chat','everyone',0,0,30,NULL,'2026-11-22 22:16:26',NULL),
+(4,'announcements','Announcements','Important updates from the administrators.','announcement','moderators',0,0,40,NULL,'2026-11-22 22:16:26',NULL),
+(5,'suggestions','Suggestions and Feedback','Recommendations and requests for improvement.','chat','everyone',0,0,50,NULL,'2026-11-22 22:16:26',NULL),
+(6,'concerns','Community Concerns','Questions and concerns that can be discussed openly.','chat','everyone',0,0,60,NULL,'2026-11-22 22:16:26',NULL);
 
 -- community_inquiry_categories (6 rows)
 INSERT INTO `community_inquiry_categories` (`id`,`name`,`description`,`sort_order`,`is_active`) VALUES
@@ -3596,37 +3720,37 @@ CREATE TABLE IF NOT EXISTS registration_attempts (
 
 -- super_admins (1 rows)
 INSERT INTO `super_admins` (`id`,`username`,`password_hash`,`full_name`,`email`,`status`,`must_change_password`,`password_changed_at`,`failed_attempts`,`last_login_at`,`last_login_ip`,`created_by`,`created_at`) VALUES
-(1,'superadmin','$2y$10$2FzspJ3TO92q8nyt.HItsOLgo2roTDHzPDc/H/YVIs881p94LZjua','Platform Super Admin','superadmin@local.test','active',0,'2026-11-22 19:15:55',0,NULL,NULL,NULL,'2026-11-22 19:15:55');
+(1,'superadmin','$2y$10$gmDvi42MlMMJAxx2ReBsXeZFbwnYWbl98HGsJ25NRi9Q.cNXq33WO','Platform Super Admin','superadmin@local.test','active',0,'2026-11-22 22:16:26',0,NULL,NULL,NULL,'2026-11-22 22:16:26');
 
 -- companies (1 rows)
 INSERT INTO `companies` (`id`,`name`,`address`,`contact_person`,`phone`,`email`,`tin`,`status`,`owner_user_id`,`require_approval`,`join_role_id`,`template_company_id`,`notes`,`last_error`,`created_by`,`created_at`,`activated_at`,`deactivated_at`,`updated_at`) VALUES
-(1,'Your Company Name','Company address','System Administrator',NULL,NULL,NULL,'active',1,1,NULL,NULL,'The original database, registered as Company 1',NULL,NULL,'2026-11-22 19:15:55','2026-11-22 19:15:55',NULL,NULL);
+(1,'Your Company Name','Company address','System Administrator',NULL,NULL,NULL,'active',1,1,NULL,NULL,'The original database, registered as Company 1',NULL,NULL,'2026-11-22 22:16:26','2026-11-22 22:16:26',NULL,NULL);
 
 -- company_databases (1 rows)
 INSERT INTO `company_databases` (`company_id`,`db_name`,`is_primary`,`created_by_platform`,`table_count`,`triggers_ok`,`created_at`,`verified_at`) VALUES
-(1,'gsmart_distribution',1,0,107,1,'2026-11-22 19:15:55','2026-11-22 19:15:55');
+(1,'gsmart_distribution',1,0,109,1,'2026-11-22 22:16:26','2026-11-22 22:16:26');
 
 -- company_codes (1 rows)
 INSERT INTO `company_codes` (`id`,`company_id`,`code`,`status`,`expires_at`,`created_by`,`created_at`,`retired_at`) VALUES
-(1,1,'YCNEBED3','active',NULL,'setup:admin','2026-11-22 19:15:55',NULL);
+(1,1,'YCNVYW8W','active',NULL,'setup:admin','2026-11-22 22:16:26',NULL);
 
 -- user_company_memberships (11 rows)
 INSERT INTO `user_company_memberships` (`id`,`company_id`,`company_user_id`,`username`,`full_name`,`email`,`status`,`created_via`,`joined_at`,`updated_at`) VALUES
-(1,1,1,'admin','System Administrator','admin@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(2,1,2,'accountant','Ana Cruz','accountant@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(3,1,3,'arclerk','Ben Garcia','arclerk@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(4,1,4,'apclerk','Carla Lim','apclerk@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(5,1,5,'invclerk','Dan Villanueva','invclerk@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(6,1,6,'allocator','Lito Bautista','allocator@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(7,1,7,'salesrep','Maria Santos','salesrep@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(8,1,8,'supervisor','Fred Tan','supervisor@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(9,1,9,'cashier1','Ella Ramos','cashier1@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(10,1,10,'glenn','Glenn Abad','glenn@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55'),
-(11,1,11,'auditor','Grace Uy','auditor@northpoint.test','active','admin','2026-11-22 19:15:55','2026-11-22 19:15:55');
+(1,1,1,'admin','System Administrator','admin@northpoint.test','active','admin','2026-11-22 22:16:25','2026-11-22 22:16:26'),
+(2,1,2,'accountant','Ana Cruz','accountant@northpoint.test','active','admin','2026-11-22 22:16:25','2026-11-22 22:16:26'),
+(3,1,3,'arclerk','Ben Garcia','arclerk@northpoint.test','active','admin','2026-11-22 22:16:25','2026-11-22 22:16:26'),
+(4,1,4,'apclerk','Carla Lim','apclerk@northpoint.test','active','admin','2026-11-22 22:16:25','2026-11-22 22:16:26'),
+(5,1,5,'invclerk','Dan Villanueva','invclerk@northpoint.test','active','admin','2026-11-22 22:16:25','2026-11-22 22:16:26'),
+(6,1,6,'allocator','Lito Bautista','allocator@northpoint.test','active','admin','2026-11-22 22:16:25','2026-11-22 22:16:26'),
+(7,1,7,'salesrep','Maria Santos','salesrep@northpoint.test','active','admin','2026-11-22 22:16:26','2026-11-22 22:16:26'),
+(8,1,8,'supervisor','Fred Tan','supervisor@northpoint.test','active','admin','2026-11-22 22:16:26','2026-11-22 22:16:26'),
+(9,1,9,'cashier1','Ella Ramos','cashier1@northpoint.test','active','admin','2026-11-22 22:16:26','2026-11-22 22:16:26'),
+(10,1,10,'glenn','Glenn Abad','glenn@northpoint.test','active','admin','2026-11-22 22:16:26','2026-11-22 22:16:26'),
+(11,1,11,'auditor','Grace Uy','auditor@northpoint.test','active','admin','2026-11-22 22:16:26','2026-11-22 22:16:26');
 
 -- platform_audit (1 rows)
 INSERT INTO `platform_audit` (`id`,`created_at`,`actor_type`,`actor_id`,`actor_name`,`company_id`,`action`,`details`,`ip_address`) VALUES
-(1,'2026-11-22 19:15:55','user',1,'admin',1,'platform_setup','The existing database was registered as Company 1 (Your Company Name); owner admin; Super Admin superadmin created','cli');
+(1,'2026-11-22 22:16:26','user',1,'admin',1,'platform_setup','The existing database was registered as Company 1 (Your Company Name); owner admin; Super Admin superadmin created','cli');
 
 -- platform_settings (1 rows)
 INSERT INTO `platform_settings` (`setting_key`,`setting_value`) VALUES

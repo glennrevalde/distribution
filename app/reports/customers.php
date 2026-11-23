@@ -415,7 +415,7 @@ Report::define('txn_list_customer', [
     'filters' => ['range', 'customer', 'customer_type', 'class', 'txn_type', 'nonposting'],
     'sortable' => false,
     'run' => function (array $f): array {
-        $types = ['invoice', 'sales_receipt', 'payment', 'credit_memo', 'statement_charge', 'finance_charge', 'refund', 'pos_sale', 'pos_return'];
+        $types = ['invoice', 'sales_receipt', 'payment', 'credit_memo', 'statement_charge', 'finance_charge', 'shortage_charge', 'refund', 'pos_sale', 'pos_return'];
         if ($f['include_nonposting'] === '1') {
             $types = array_merge($types, ['estimate', 'sales_order']);
         }

@@ -123,9 +123,8 @@ function layout_start(string $title, array $opt = []): void
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" type="image/svg+xml" href="<?= h(asset('img/favicon.svg')) ?>">
+<?= Pwa::head() ?>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0f2a3d">
 <title><?= h($title) ?> - <?= h($app) ?></title>
 <link rel="preload" href="<?= h(asset('fonts/barlow-latin-400-normal.woff2')) ?>" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="<?= h(vendor_asset('bootstrap.css')) ?>">
@@ -213,6 +212,7 @@ function layout_start(string $title, array $opt = []): void
         <kbd class="search-key" aria-hidden="true">/</kbd>
       </form>
       <?php endif; ?>
+      <?= Pwa::installButton() ?>
       <?php if (Access::page('home.find')): ?>
       <a class="bell-btn find-btn" href="<?= h(url('home.find')) ?>" title="Find transactions: any module, any combination of filters" aria-label="Find"><i class="bi bi-funnel"></i><span class="find-btn-text">Find</span></a>
       <?php endif; ?>

@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 final class Schema
 {
-    private const FLAG = 'schema_ok_2027_02_18';
+    private const FLAG = 'schema_ok_2027_03_08';
 
     /**
      * file => one cheap probe.
@@ -134,6 +134,13 @@ final class Schema
                    + (SELECT COUNT(production_date) + COUNT(expiry_date) FROM transaction_lines WHERE 1 = 0)
                    + (SELECT COUNT(production_date) + COUNT(expiry_date) FROM inventory_movements WHERE 1 = 0)
                    + (SELECT COUNT(track_expiry) FROM items WHERE 1 = 0)', 2],
+        // distribution v2: Inventory Transfer Closing, shortage charges and their reports, van salesmen and cashiers
+        'database/migrations/2027_03_08_van_closing_shortages.sql' =>
+            ['SELECT (SELECT COUNT(*) FROM pages WHERE page_key IN (\'inv.transfer_closing\', \'inv.shortages\'))
+                   + (SELECT COUNT(*) FROM default_accounts WHERE setting_key = \'shortage_receivable\' AND account_id IS NOT NULL)
+                   + (SELECT COUNT(rep_type) + COUNT(customer_id) FROM sales_reps WHERE 1 = 0)
+                   + (SELECT COUNT(sales_rep_id) FROM sites WHERE 1 = 0)
+                   + (SELECT COUNT(*) FROM transfer_closings WHERE 1 = 0) + (SELECT COUNT(*) FROM transfer_closing_lines WHERE 1 = 0)', 3],
     ];
 
     private static ?array $pending = null;

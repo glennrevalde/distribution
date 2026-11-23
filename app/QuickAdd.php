@@ -60,6 +60,10 @@ final class QuickAdd
         if (Access::can('inv.items', 'create')) {
             $out['item'] = url('inv.items', ['a' => 'new', 'popup' => 1]);
         }
+        // v2 distribution: a sales representative, van salesman or cashier, without leaving the form
+        if (Access::can('coa.lists', 'create')) {
+            $out['rep'] = url('coa.lists', ['tab' => 'sales_reps', 'popup' => 1]);
+        }
         // v44: the category and the unit of measure of the item form, added without leaving it
         if (Access::page('inv.categories') && Access::can('inv.categories', 'create')) {
             $out['category'] = url('inv.categories', ['a' => 'new', 'popup' => 1]);
@@ -130,6 +134,9 @@ final class QuickAdd
         if ($base === 'uom_set_id') {
             return self::attr('uom');
         }
+        if (in_array($base, ['sales_rep_id', 'shortage_rep_id', 'rep_id'], true)) {
+            return self::attr('rep');
+        }
         if (preg_match('/account\d?_id$/', $base)) {
             $types = self::accountTypes($keys);
             return $types === null ? '' : self::attr('account', $types);
@@ -169,7 +176,7 @@ final class QuickAdd
         $rec = self::record($kind, $id);
         $json = json_encode(['gsQuickAdd' => $rec], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Saved</title></head><body style="font:14px system-ui,sans-serif;padding:24px;color:#334155">'
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Saved</title><link rel="icon" type="image/svg+xml" href="' . h(asset('img/favicon.svg')) . '"></head><body style="font:14px system-ui,sans-serif;padding:24px;color:#334155">'
             . '<p>' . h(($rec['label'] ?? '') !== '' ? $rec['label'] . ' was saved.' : 'Saved.') . '</p>'
             . '<script>(function () { var d = ' . $json . '; if (window.parent && window.parent !== window) { window.parent.postMessage(d, window.location.origin); } })();</script>'
             . '</body></html>';
@@ -193,6 +200,10 @@ final class QuickAdd
             case 'category':
                 $name = (string)DB::value('SELECT name FROM item_categories WHERE id = :id', ['id' => $id]);
                 return ['kind' => 'category', 'id' => $id, 'label' => $name, 'name' => $name];
+            case 'rep':
+                $r = DB::row('SELECT * FROM sales_reps WHERE id = :id', ['id' => $id]) ?: ['name' => '', 'rep_type' => null, 'customer_id' => null];
+                return ['kind' => 'rep', 'id' => $id, 'label' => (string)$r['name'], 'name' => (string)$r['name'],
+                    'typed' => $r['name'] . ' (' . SalesReps::typeText($r['rep_type'] ?? null) . ')', 'customer' => (int)($r['customer_id'] ?? 0)];
             case 'uom':
                 $set = DB::row('SELECT id, name, base_unit FROM uom_sets WHERE id = :id', ['id' => $id]) ?: ['name' => '', 'base_unit' => ''];
                 $units = array_map(fn($u) => ['id' => (int)$u['id'], 'code' => $u['code'], 'name' => $u['name'], 'factor' => (float)$u['factor'], 'base' => (int)$u['is_base']],

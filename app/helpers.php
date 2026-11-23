@@ -6,6 +6,9 @@ declare(strict_types=1);
 /** The name of the system, shown in the top bar, on the log-in page and in every browser tab */
 const APP_PRODUCT_NAME = 'G-SMaRT Distribution System';
 
+/** the version of the stylesheets and scripts in their addresses (see asset()); raised with every release that changes them */
+const ASSET_RELEASE = '4';
+
 /**
  * The name the system goes by. config/config.php still carries the name it was installed with
  * ('Accounting System'); that one is taken as "not changed" and the product name is used. A name that
@@ -104,9 +107,10 @@ function purl(string $page = 'companies', array $params = []): string
 function asset(string $path): string
 {
     $path = ltrim($path, '/');
-    // the file's modification time is added so browsers pick up an updated stylesheet or script right away
+    // the release number and the file's modification time are added so browsers (and the app's service worker)
+    // pick up an updated stylesheet or script right away; raise ASSET_RELEASE to make every browser reload them all
     $file = APP_ROOT . '/assets/' . $path;
-    $ver = is_file($file) ? '?v=' . filemtime($file) : '';
+    $ver = is_file($file) ? '?v=' . ASSET_RELEASE . '.' . filemtime($file) : '';
     return base_url() . '/assets/' . $path . $ver;
 }
 
