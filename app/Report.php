@@ -517,7 +517,7 @@ final class Report
             if ($showTotal) {
                 $out[] = array_map(fn($c) => self::rawValue($data['totals'][$c['key']] ?? '', $c), $visible);
             }
-            csv_download(preg_replace('/\W+/', '_', strtolower($title)) . '.csv', array_map(fn($c) => (!empty($c['band']) ? $c['band'] . ' - ' : '') . $c['label'], $visible), $out);
+            csv_download(preg_replace('/\W+/', '_', strtolower($title)) . '.xlsx', array_map(fn($c) => (!empty($c['band']) ? $c['band'] . ' - ' : '') . $c['label'], $visible), $out, $title);
         }
         if ($print) {
             Access::require($pageKey, 'print');

@@ -40,7 +40,7 @@ final class Importer
                     'description'     => ['Description', 'text'],
                     'is_active'       => ['Yes for an active account; blank counts as yes', 'bool'],
                 ],
-                'sample' => ['6075', 'Transportation and Travel', 'Expense', '', '', '', '', 'Fares, fuel and lodging on company business', 'Yes'],
+                'sample' => ['6075', 'Cold Storage Fee', 'Expense', '', '', '', '', 'Monthly cold storage of frozen stock', 'Yes'],
             ],
             'items' => [
                 'label' => 'Inventory items',
@@ -76,7 +76,7 @@ final class Importer
                     'allow_pos_charge' => ['Can charge at the POS (yes/no)', 'bool'],
                     'notes'           => ['Notes', 'text'],
                 ],
-                'sample' => ['ABC Trading Corp.', 'ABC Trading Corporation', 'Ana Cruz', '(02) 8123-4567', '0917 000 0000', 'ana@abc.example', '12 Rizal Ave., Makati City', '', '123-456-789-000', 'Net 30', '100000', '', 'VAT12', '', '', 'no', ''],
+                'sample' => ['Sunrise Supermart', 'Sunrise Supermart Inc.', 'Ana Cruz', '(054) 473-1234', '0917 000 0000', 'purchasing@sunrise.example', 'Magsaysay Ave., Naga City', '', '123-456-789-000', 'Net 15', '100000', '', 'VAT12', '', '', 'no', ''],
             ],
             'vendors' => [
                 'label' => 'Vendors (suppliers)',
@@ -97,7 +97,7 @@ final class Importer
                     'account_no'     => ['Your account number with the supplier', 'text'],
                     'notes'          => ['Notes', 'text'],
                 ],
-                'sample' => ['TechDistributors Inc.', 'TechDistributors Incorporated', 'Ben Santos', '(02) 8555-1234', '', 'ben@techdist.example', 'Pasig City', '293-713-644-000', 'Net 30', '0', '6040', 'TD-0012', ''],
+                'sample' => ['Northfield Poultry Corp.', 'Northfield Poultry Corporation', 'Ben Santos', '(054) 811-2233', '', 'orders@northfield.example', 'Pili, Camarines Sur', '293-713-644-000', 'Net 15', '0', '5000', 'NPC-0012', ''],
             ],
             'fixed_assets' => [
                 'label' => 'Fixed assets',
@@ -123,7 +123,7 @@ final class Importer
                     'post_opening'     => ['Yes to post an opening-balance entry for this asset; leave blank when it is already on the books', 'bool'],
                     'notes'            => ['Notes', 'text'],
                 ],
-                'sample' => ['Delivery Van (L300)', 'Transportation Equipment', '', 'Main Warehouse', 'NAB-1234', 'Industrial Machines Corp.', '', '2026-07-01', '1200000', '200000', '5', 'declining_balance', '80000', '2026-08-31', '', ''],
+                'sample' => ['Reefer Van (L300)', 'Transportation Equipment', '', 'Naga Cold Storage', 'NAB-1234', 'Northfield Poultry Corp.', '', '2026-07-01', '1200000', '200000', '5', 'declining_balance', '80000', '2026-08-31', '', ''],
             ],
             'invoices' => [
                 'label' => 'Invoices',
@@ -131,7 +131,7 @@ final class Importer
                 'note'  => 'One line per item line. Lines that carry the same "Document no." belong to one invoice; the header details are taken from its first line.',
                 'txn'   => 'invoice',
                 'columns' => self::salesColumns('invoice'),
-                'sample' => ['INV-IMP-001', '2026-09-01', 'ABC Trading Corp.', 'Net 30', 'PORK CHOP', 'Pork chop, cut', '2', '299', '0', 'VAT12', 'Main Warehouse', 'Piggery', 'Imported invoice', ''],
+                'sample' => ['INV-IMP-001', '2026-09-01', 'Sunrise Supermart', 'Net 15', 'DRM-FZ', 'Chicken Drumstick, Frozen', '12.5', '185', '0', 'VAT12', 'Naga Cold Storage', 'Head Office', 'Imported invoice', ''],
             ],
             'sales_receipts' => [
                 'label' => 'Sales receipts',
@@ -139,7 +139,7 @@ final class Importer
                 'note'  => 'One line per item line, grouped by "Document no.". The money is put into the account named in "Deposit to", or Undeposited Funds when it is blank.',
                 'txn'   => 'sales_receipt',
                 'columns' => self::salesColumns('sales_receipt'),
-                'sample' => ['SR-IMP-001', '2026-09-01', 'Walk-in Customer', '', 'PORK CHOP', 'Pork chop, cut', '1', '299', '0', 'VAT12', 'Main Warehouse', 'Meat Shop', 'Counter sale', '1010'],
+                'sample' => ['SR-IMP-001', '2026-09-01', 'Walk-in Customer', '', 'BLB-250', 'Chicken Bola-Bola 250 g', '4', '65', '0', 'VAT12', 'Naga Outlet', 'Naga Outlet', 'Counter sale', '1000'],
             ],
             'sales_orders' => [
                 'label' => 'Sales orders',
@@ -147,7 +147,7 @@ final class Importer
                 'note'  => 'One line per item line, grouped by "Document no.". Sales orders do not post to the ledger until they are invoiced.',
                 'txn'   => 'sales_order',
                 'columns' => self::salesColumns('sales_order'),
-                'sample' => ['SO-IMP-001', '2026-09-01', 'ABC Trading Corp.', '', 'PORK CHOP', 'Pork chop, cut', '10', '299', '0', 'VAT12', 'Main Warehouse', '', 'Imported order', ''],
+                'sample' => ['SO-IMP-001', '2026-09-01', 'Sunrise Supermart', '', 'WCK-FC', 'Whole Chicken, Fresh Chilled', '50', '175', '0', 'VAT12', 'Naga Cold Storage', '', 'Imported order', ''],
             ],
             'purchase_orders' => [
                 'label' => 'Purchase orders',
@@ -155,7 +155,7 @@ final class Importer
                 'note'  => 'One line per item line, grouped by "Document no.". Purchase orders do not post to the ledger.',
                 'txn'   => 'purchase_order',
                 'columns' => self::purchaseColumns('purchase_order'),
-                'sample' => ['PO-IMP-001', '2026-09-01', 'TechDistributors Inc.', '', 'LAP-001', 'Laptop 14-inch i5', '5', '32000', 'VAT12', 'Main Warehouse', '', 'Imported order'],
+                'sample' => ['PO-IMP-001', '2026-09-01', 'Bicol Packaging Supply', '', 'PKG-BAG', 'Vacuum Bag 2 kg', '500', '4.50', 'VAT12', 'Naga Cold Storage', '', 'Imported order'],
             ],
             'receive_bills' => [
                 'label' => 'Receive items and enter bills',
@@ -163,7 +163,7 @@ final class Importer
                 'note'  => 'One line per item line, grouped by "Document no.". Each document becomes a bill: the items come into stock and Accounts Payable is credited.',
                 'txn'   => 'bill',
                 'columns' => self::purchaseColumns('bill'),
-                'sample' => ['BILL-IMP-001', '2026-09-01', 'TechDistributors Inc.', 'TD-99120', 'LAP-001', 'Laptop 14-inch i5', '5', '32000', 'VAT12', 'Main Warehouse', 'Head Office', 'Imported bill'],
+                'sample' => ['BILL-IMP-001', '2026-09-01', 'Bicol Packaging Supply', 'SI-99120', 'PKG-BAG', 'Vacuum Bag 2 kg', '500', '4.50', 'VAT12', 'Naga Cold Storage', 'Head Office', 'Imported bill'],
             ],
             'checks' => [
                 'label' => 'Write checks',
@@ -183,7 +183,7 @@ final class Importer
                     'class'        => ['Class', 'ref:classes'],
                     'memo'         => ['Memo', 'text'],
                 ],
-                'sample' => ['CHK-IMP-001', '2026-09-02', '1010', 'Meralco', '1051', '6020', 'August electricity', '8450', '', 'Head Office', 'Utilities'],
+                'sample' => ['CHK-IMP-001', '2026-09-02', '1010', 'Camarines Power Cooperative', '1051', '6020', 'August electricity', '8450', '', 'Head Office', 'Utilities'],
             ],
             'cash_vouchers' => [
                 'label' => 'Cash vouchers',
@@ -244,7 +244,7 @@ final class Importer
                     'payment_method' => ['Payment method: Cash, GCash, P.O. Card ...', 'ref:payment_methods'],
                     'class'       => ['Class', 'ref:classes'],
                 ],
-                'sample' => ['MK1-IMP-0001', '2026-09-05', 'POS-01', '', 'PORK CHOP', 'Pork chop, cut', '1.5', '299', '0', 'VAT12', 'Cash', 'Meat Shop'],
+                'sample' => ['POS1-IMP-0001', '2026-09-05', 'POS-01', '', 'BRS-FZ', 'Chicken Breast, Frozen', '1.5', '210', '0', 'VAT12', 'Cash', 'Naga Outlet'],
             ],
         ];
     }
@@ -325,10 +325,10 @@ final class Importer
     private static function itemSample(): array
     {
         $example = [
-            'code' => 'LAP-015', 'name' => 'Laptop 15-inch i7', 'item_type' => 'Inventory part', 'barcode' => '4800000150157',
-            'description' => 'Laptop 15-inch, i7, 16 GB', 'purchase_description' => 'Laptop 15-inch i7 (supplier model LX15)', 'category' => 'Computers',
-            'unit' => 'pc', 'cost' => '42000', 'sales_price' => '55000', 'tax_code' => 'VAT12', 'preferred_vendor' => 'TechDistributors Inc.',
-            'reorder_point' => '5', 'max_stock' => '20', 'opening_qty' => '10', 'opening_cost' => '42000', 'opening_site' => 'WH',
+            'code' => 'THG-FZ', 'name' => 'Chicken Thigh, Frozen, Bag', 'item_type' => 'Inventory part', 'barcode' => '4800000150157',
+            'description' => 'Chicken Thigh, Frozen', 'purchase_description' => 'Chicken Thigh, Frozen (supplier code NPC-THG)', 'category' => 'Chicken Cuts',
+            'unit' => 'kg', 'cost' => '160', 'sales_price' => '195', 'tax_code' => 'VAT12', 'preferred_vendor' => 'Northfield Poultry Corp.',
+            'reorder_point' => '100', 'max_stock' => '800', 'opening_qty' => '250', 'opening_cost' => '160', 'opening_site' => 'Naga Cold Storage',
             'opening_date' => today(), 'is_active' => 'Yes',
         ];
         return array_map(fn($k) => $example[$k] ?? '', array_keys(self::itemColumns()));
@@ -388,6 +388,90 @@ final class Importer
     }
 
     /**
+     * The template as an Excel workbook: an Import sheet with the column names on row 1 (frozen) and nothing
+     * under them, a How to fill sheet with what goes in each column and an example, and drop-down lists on the
+     * Import sheet: the allowed words of a column (Debit / Credit, the account types, Yes / No) and the
+     * company's own sites, customers, items, accounts, terms and the rest. Every column but the amounts is
+     * formatted as text, so codes keep their leading zeros and dates stay as they are typed.
+     */
+    public static function workbook(string $key): array
+    {
+        $t = self::type($key);
+        $cols = $t['columns'];
+        $head = array_keys($cols);
+        $sample = array_values($t['sample'] ?? []);
+        $kinds = [];
+        $lists = [];
+        $guide = [];
+        foreach ($head as $i => $col) {
+            [$label, $kind] = [$cols[$col][0], $cols[$col][1]];
+            $required = !empty($cols[$col][2]);
+            $kinds[$i] = in_array($kind, ['num', 'int'], true) ? 'num' : 'text';
+            $allowed = '';
+            if ($kind === 'bool') {
+                $lists[$i] = ['values' => ['Yes', 'No'], 'strict' => true];
+                $allowed = 'Yes or No';
+            } elseif (str_starts_with($kind, 'list:')) {
+                $words = explode('|', substr($kind, 5));
+                $lists[$i] = ['values' => $words, 'strict' => true];
+                $allowed = implode(', ', $words);
+            } elseif (str_starts_with($kind, 'ref:')) {
+                $values = self::refValues(substr($kind, 4));
+                if ($values) {
+                    $lists[$i] = ['values' => $values, 'strict' => false];
+                    $allowed = 'Pick from the list (' . count($values) . ') or type it';
+                    // the example is one that is really on the company's list
+                    $ex = (string)($sample[$i] ?? '');
+                    if ($ex !== '' && !in_array(mb_strtolower($ex), array_map('mb_strtolower', $values), true) && !self::ref(substr($kind, 4), $ex)) {
+                        $sample[$i] = $values[0];
+                    }
+                }
+            } elseif ($kind === 'date') {
+                $allowed = 'A date: 2026-09-30 or 09/30/2026';
+            } elseif ($kind === 'num' || $kind === 'int') {
+                $allowed = 'A number';
+            }
+            $guide[] = [$col, $label, $required ? 'Yes' : '', $allowed, (string)($sample[$i] ?? '')];
+        }
+        return [
+            ['name' => 'Import', 'head' => $head, 'rows' => [], 'kinds' => $kinds, 'lists' => $lists,
+                'widths' => array_map(fn($c) => max(12, min(34, strlen($c) + 4)), $head)],
+            ['name' => 'How to fill', 'wrap' => true, 'kinds' => ['text', 'text', 'text', 'text', 'text'], 'widths' => [24, 58, 9, 34, 30],
+                'title' => [
+                    [$t['label'], 'bold'],
+                    ['Fill in the Import sheet: keep row 1 as it is and type one ' . (isset($t['txn']) ? 'item line' : 'record') . ' per row from row 2. '
+                        . 'A column you do not need can be left blank or deleted, and the order of the columns does not matter. '
+                        . 'Save the workbook as it is (Excel Workbook, .xlsx) and choose it on System Administration > Import from CSV, then press Check the file.', 'note'],
+                    [(string)($t['note'] ?? ''), 'note'],
+                ],
+                'head' => ['Column', 'What goes in it', 'Needed', 'Allowed values', 'Example'], 'rows' => $guide],
+        ];
+    }
+
+    /** The names (or codes) a drop-down of a reference column offers: what Import looks the value up by */
+    private static function refValues(string $table): array
+    {
+        $show = [
+            'terms' => 'name', 'price_levels' => 'name', 'tax_codes' => 'code', 'customer_types' => 'name', 'sales_reps' => 'name',
+            'accounts' => 'name', 'classes' => 'name', 'sites' => 'name', 'item_categories' => 'name', 'uom_sets' => 'name',
+            'customers' => 'name', 'vendors' => 'name', 'items' => 'code', 'asset_categories' => 'name', 'pos_terminals' => 'code',
+            'payment_methods' => 'name',
+        ][$table] ?? null;
+        if (!$show || !preg_match('/^[a-z_]+$/', $table)) {
+            return [];
+        }
+        foreach (["SELECT DISTINCT $show FROM $table WHERE is_active = 1 AND $show <> '' ORDER BY $show LIMIT 3000",
+                  "SELECT DISTINCT $show FROM $table WHERE $show <> '' ORDER BY $show LIMIT 3000"] as $sql) {
+            try {
+                return array_map('strval', DB::column($sql));
+            } catch (Throwable $e) {
+                // no is_active column on this list: all of it
+            }
+        }
+        return [];
+    }
+
+    /**
      * Opens a CSV as UTF-8 text whatever Excel saved it as. Excel on Windows writes "CSV" files in the
      * Windows-1252 code page, so curly quotes (" "), dashes and the peso sign arrive as single bytes that are
      * not UTF-8; MySQL then refuses them ("Incorrect string value") or the cell turns up blank. Those files are
@@ -401,11 +485,8 @@ final class Importer
             fail('The file could not be read.');
         }
         if (str_starts_with($raw, "\xFF\xFE") || str_starts_with($raw, "\xFE\xFF")) {
+            // Excel's "Unicode text" (tab-separated: read() finds the tabs)
             $raw = mb_convert_encoding(substr($raw, 2), 'UTF-8', str_starts_with($raw, "\xFF\xFE") ? 'UTF-16LE' : 'UTF-16BE');
-            // Excel's "Unicode text" is tab-separated
-            if (substr_count(strtok($raw, "\n") ?: '', "\t") > substr_count(strtok($raw, "\n") ?: '', ',')) {
-                $raw = str_replace("\t", ',', $raw);
-            }
         } elseif (str_starts_with($raw, "\xEF\xBB\xBF")) {
             $raw = substr($raw, 3);
         } elseif (!mb_check_encoding($raw, 'UTF-8')) {
@@ -420,6 +501,25 @@ final class Importer
         return $fh;
     }
 
+    /** The column separator of a file, from its first line: the one that splits it into the most known column names */
+    public static function separator(string $first, array $columns): string
+    {
+        $best = ',';
+        $bestScore = [-1, -1];
+        foreach ([',', ';', "\t", '|'] as $sep) {
+            $cells = str_getcsv(rtrim($first, "\r\n"), $sep, '"', '');
+            $known = 0;
+            foreach ($cells as $c) {
+                $known += isset($columns[strtolower(trim(str_replace([' ', '-'], '_', (string)$c)))]) ? 1 : 0;
+            }
+            $score = [$known, count($cells)];
+            if ($score > $bestScore) {
+                [$best, $bestScore] = [$sep, $score];
+            }
+        }
+        return $best;
+    }
+
     /** Reads an uploaded CSV into rows keyed by the column names of the type */
     public static function read(string $file, string $key): array
     {
@@ -427,15 +527,25 @@ final class Importer
         if (!$t) {
             fail('Choose what to import.');
         }
+        // an Excel workbook is read as it is (the template the system gives is one)
+        $head8 = (string)@file_get_contents($file, false, null, 0, 8);
+        if (Xlsx::isOldXls($head8)) {
+            fail('This is an old Excel 97-2003 workbook (.xls). In Excel, save it as Excel Workbook (.xlsx) or as CSV, then choose it again.');
+        }
+        if (Xlsx::isXlsx($head8)) {
+            return self::readWorkbook((string)file_get_contents($file), $t);
+        }
         $fh = self::openAsUtf8($file);
         $first = fgets($fh);
         if ($first === false) {
             fclose($fh);
             fail('The file is empty.');
         }
-        // Excel writes a byte-order mark and sometimes uses semicolons
+        // Excel writes a byte-order mark, and the columns may be split by commas, by semicolons (a comma-decimal
+        // Windows setting) or by tabs (Excel's "Text (Tab delimited)" or "Unicode Text" saved under a .csv name,
+        // or cells pasted from a sheet): the separator is the one that turns the first line into the most known columns
         $first = preg_replace('/^\xEF\xBB\xBF/', '', $first);
-        $sep = substr_count($first, ';') > substr_count($first, ',') ? ';' : ',';
+        $sep = self::separator($first, $t['columns']);
         rewind($fh);
         $head = fgetcsv($fh, 0, $sep, '"', '');
         if ($head) {
@@ -450,7 +560,9 @@ final class Importer
         }
         if (!$map) {
             fclose($fh);
-            fail('The first line of the file must hold the column names. Download the template for "' . $t['label'] . '" to see them.');
+            $seen = trim(preg_replace('/\s+/', ' ', str_replace(["\t", "\r", "\n"], [' | ', '', ''], (string)$first)));
+            fail('The first line of the file must hold the column names (' . implode(', ', array_slice(array_keys($t['columns']), 0, 4)) . ', ...). '
+                . 'The first line of this file reads: "' . mb_strimwidth($seen, 0, 90, '...') . '". Download the template for "' . $t['label'] . '" to see them.');
         }
         $rows = [];
         $line = 1;
@@ -468,6 +580,57 @@ final class Importer
         fclose($fh);
         if (!$rows) {
             fail('The file holds no data lines.');
+        }
+        return $rows;
+    }
+
+    /**
+     * The rows of an Excel workbook: the sheet whose first filled row holds the most known column names (the
+     * Import sheet of the template; How to fill is left alone), each row numbered as Excel numbers it.
+     */
+    private static function readWorkbook(string $bytes, array $t): array
+    {
+        $norm = fn($v): string => strtolower(trim(str_replace([' ', '-'], '_', (string)$v)));
+        $best = null;
+        $first = null;
+        foreach (Xlsx::sheets($bytes) as $sheet) {
+            if (!$sheet['rows']) {
+                continue;
+            }
+            $headNo = array_key_first($sheet['rows']);
+            $map = [];
+            foreach ($sheet['rows'][$headNo] as $i => $name) {
+                if (isset($t['columns'][$norm($name)])) {
+                    $map[$i] = $norm($name);
+                }
+            }
+            if ($map && (!$best || count($map) > count($best['map']))) {
+                $best = ['sheet' => $sheet, 'head' => $headNo, 'map' => $map];
+            }
+            $first = $first ?? $sheet['rows'][$headNo];
+        }
+        if (!$best) {
+            fail('Row 1 of the workbook must hold the column names (' . implode(', ', array_slice(array_keys($t['columns']), 0, 4)) . ', ...). '
+                . ($first !== null ? 'It reads: "' . mb_strimwidth(implode(' | ', $first), 0, 90, '...') . '". ' : 'The workbook is empty. ')
+                . 'Download the template for "' . $t['label'] . '" and fill in its Import sheet.');
+        }
+        $rows = [];
+        foreach ($best['sheet']['rows'] as $no => $cells) {
+            if ($no <= $best['head']) {
+                continue;
+            }
+            $row = ['_line' => (int)$no];
+            $any = false;
+            foreach ($best['map'] as $i => $n) {
+                $row[$n] = trim((string)($cells[$i] ?? ''));
+                $any = $any || $row[$n] !== '';
+            }
+            if ($any) {
+                $rows[] = $row;
+            }
+        }
+        if (!$rows) {
+            fail('The workbook holds no data rows under the column names.');
         }
         return $rows;
     }

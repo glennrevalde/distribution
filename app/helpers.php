@@ -540,7 +540,19 @@ function json_out($data, int $code = 200): never
     exit;
 }
 
-function csv_download(string $filename, array $header, array $rows): never
+/**
+ * A list or report "exported to spreadsheet": sent as an Excel workbook (.xlsx), with the column names bold and
+ * frozen on row 1 and a filter on them, numbers as numbers and dates as dates. A workbook keeps its columns and
+ * its accented letters whatever program or regional setting opens it, which a CSV does not.
+ */
+function csv_download(string $filename, array $header, array $rows, ?string $sheet = null): never
+{
+    $sheet = $sheet ?? ucfirst(trim(str_replace('_', ' ', preg_replace('/\.(csv|txt|xlsx)$/i', '', basename($filename)))));
+    Xlsx::download($filename, [['name' => mb_substr(preg_replace('/\s+\d{4}-?\d{2}-?\d{2}.*$/', '', $sheet) ?: 'Export', 0, 31), 'head' => $header, 'rows' => $rows, 'filter' => true]]);
+}
+
+/** The same rows as a plain CSV (UTF-8, commas): the CSV import template, for programs that do not open Excel workbooks */
+function csv_file_download(string $filename, array $header, array $rows): never
 {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $filename) . '"');

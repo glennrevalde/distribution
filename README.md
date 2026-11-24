@@ -141,8 +141,8 @@ Everything in G-SMaRT Accounting is included and unchanged in its logic:
 - **Point of Sale:** POS Register and FB POS, shifts, split tenders, suspend and recall, returns and voids with supervisor approval or approval codes, X/Z readings, cash count sheet, Bluetooth receipt printing.
 - **Banking:** checks, cash vouchers, deposits, transfers, reconciliation. **BIR Reports:** withholding tax table, Form 2307 and the VAT and withholding registers.
 - **Community:** chat channels, private messages, questions and inquiries.
-- **System Administration:** users, roles, page access per role and per user, special permissions, company settings, closing date, CSV imports, backup and restore, and an audit trail that cannot be edited or deleted (MySQL triggers block it).
-- **Reports:** filters, drill-down, CSV, print, PDF, memorize, scheduled e-mail, and Modify Report layouts.
+- **System Administration:** users, roles, page access per role and per user, special permissions, company settings, closing date, imports from Excel workbooks (.xlsx templates with drop-down lists) and CSV files, backup and restore, and an audit trail that cannot be edited or deleted (MySQL triggers block it).
+- **Reports:** filters, drill-down, export to Excel (.xlsx), print, PDF, memorize, scheduled e-mail, and Modify Report layouts. Every list and report export is an Excel workbook.
 
 ## 8. The interface
 

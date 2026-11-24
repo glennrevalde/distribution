@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * E-mails memorized reports that have a schedule (daily / weekly / monthly) as CSV attachments.
+ * E-mails memorized reports that have a schedule (daily / weekly / monthly) as Excel workbook (.xlsx) attachments.
  * Run once a day, e.g.  0 6 * * *  php /path/to/accounting-system/tools/send_scheduled_reports.php
  * With several companies the same line sends every active company's reports (or add --company=N for one).
  * Uses PHP mail(); configure sendmail / SMTP in php.ini for your server.
@@ -55,18 +55,13 @@ foreach ($due as $m) {
     parse_str((string)$m['query_string'], $q);
     $_GET = $q;
     [$head, $rows] = Report::csvFor($def['params']['report'] ?? '');
-    $fh = fopen('php://temp', 'w+');
-    fputcsv($fh, $head, ',', '"', '');
-    foreach ($rows as $r) {
-        fputcsv($fh, $r, ',', '"', '');
-    }
-    rewind($fh);
-    $csv = stream_get_contents($fh);
+    // the report goes as an Excel workbook, the same as Export to spreadsheet
+    $xlsx = Xlsx::build([['name' => mb_substr((string)$m['name'], 0, 31), 'head' => $head, 'rows' => $rows, 'filter' => true]]);
     $boundary = 'b' . bin2hex(random_bytes(8));
-    $file = preg_replace('/\W+/', '_', strtolower($m['name'])) . '.csv';
+    $file = preg_replace('/\W+/', '_', strtolower($m['name'])) . '.xlsx';
     $body = "--$boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{$m['name']} from $company, generated " . date('m/d/Y h:i A') . ".\r\n"
-        . "--$boundary\r\nContent-Type: text/csv; name=\"$file\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"$file\"\r\n\r\n"
-        . chunk_split(base64_encode($csv)) . "--$boundary--";
+        . "--$boundary\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; name=\"$file\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"$file\"\r\n\r\n"
+        . chunk_split(base64_encode($xlsx)) . "--$boundary--";
     $ok = @mail((string)$m['email_to'], $m['name'] . ' - ' . $company, $body, "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"$boundary\"");
     DB::update('memorized_reports', ['last_sent_at' => date('Y-m-d H:i:s')], 'id = :id', ['id' => $m['id']]);
     Audit::log($ok ? 'report_emailed' : 'report_email_failed', 'home', 'memorized_report', (int)$m['id'], $m['name'], ['reason' => 'To ' . $m['email_to'], 'page_key' => $m['report_key']]);

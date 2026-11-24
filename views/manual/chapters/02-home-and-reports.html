@@ -500,7 +500,7 @@
 </tr>
 <tr>
 <td><strong>Export</strong></td>
-<td>Downloads the results as a spreadsheet file (CSV) with the columns Date, Type, Num, Name, Account, Memo, Status and Amount.</td>
+<td>Downloads the results as an Excel workbook (.xlsx) with the columns Date, Type, Num, Name, Account, Memo, Status and Amount.</td>
 </tr>
 </tbody>
 </table></div>
@@ -824,7 +824,7 @@
 <h3 id="s-export-to-spreadsheet">Export to spreadsheet<a class="man-hash" href="#s-export-to-spreadsheet" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
 <ol>
 <li>Set the dates and filters, and click <strong>Refresh</strong>.</li>
-<li>Click <strong>Export to spreadsheet</strong>. The browser downloads a CSV file named after the report, for example <code>income_statement.csv</code>.</li>
+<li>Click <strong>Export to spreadsheet</strong>. The browser downloads an Excel workbook named after the report, for example <code>income_statement.xlsx</code>: the column names are bold and frozen on row 1 with a filter on them, amounts are numbers shown as 1,234.50 and dates are dates, so the sheet can be sorted, filtered and totalled at once.</li>
 <li>Open it in Excel or any spreadsheet program.</li>
 </ol>
 <p>The file holds the columns shown on the screen, in their order and with their headings, the rows shown on the screen, and the grand total. Amounts are plain numbers with two decimals, without commas, so they can be added up in the spreadsheet; dates are written year-month-day. Every export is recorded in the audit trail.</p>
@@ -888,7 +888,7 @@
 <p>The program says <strong>Report memorized.</strong> and shows the report again. It is now in <a href="#pg-home-memorized">Memorized Reports</a> and in the Report Center.</p>
 <div class="man-callout man-tip"><div class="man-callout-t"><i class="bi bi-lightbulb"></i>Tip</div><p>A period chosen from the <strong>Dates</strong> list moves with the calendar: a report memorized on <strong>This month</strong> always shows the current month. Dates in <strong>From</strong> and <strong>To</strong> are remembered as they are. After you press <strong>Refresh</strong>, the From and To dates on the screen are sent with the report and stay fixed. To memorize a moving period, choose it from <strong>Dates</strong> after setting the other filters, and click <strong>Memorize</strong> without pressing <strong>Refresh</strong> again.</p></div>
 <h4 id="s-scheduled-e-mail">Scheduled e-mail<a class="man-hash" href="#s-scheduled-e-mail" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
-<p>A memorized report with <strong>Send automatically</strong> set is e-mailed as a spreadsheet file (CSV) attached to a message whose subject is its name and the company name. The e-mails are sent by a program on the server, <code>tools/send_scheduled_reports.php</code>, which your administrator runs once a day (for example with Windows Task Scheduler). On each run:</p>
+<p>A memorized report with <strong>Send automatically</strong> set is e-mailed as an Excel workbook (.xlsx) attached to a message whose subject is its name and the company name. The e-mails are sent by a program on the server, <code>tools/send_scheduled_reports.php</code>, which your administrator runs once a day (for example with Windows Task Scheduler). On each run:</p>
 <ul>
 <li>a daily report goes out once a day, a weekly report when a week has passed since the last sending, and a monthly report when a month has passed;</li>
 <li>a new scheduled report goes out at the next run;</li>

@@ -1478,13 +1478,13 @@ function render_txn_list(string $pageKey, array $types, string $title, array $op
     if (g('export') === 'csv' && Access::can($pageKey, 'print')) {
         Audit::log('export', explode('.', $pageKey)[0], 'list', null, $title, ['page_key' => $pageKey]);
         if ($siteCols) {
-            csv_download($pageKey . '.csv', ['Date', 'Number', 'From site', 'To site', 'Reference', 'Memo', 'Class', 'Quantity', 'Status'], array_map(fn($r) => [
+            csv_download(preg_replace('/\W+/', '_', strtolower($title)) . '.xlsx', ['Date', 'Number', 'From site', 'To site', 'Reference', 'Memo', 'Class', 'Quantity', 'Status'], array_map(fn($r) => [
                 $r['txn_date'], $r['txn_no'], $siteNames[$r['site_id']] ?? '', $siteNames[$r['site2_id']] ?? '', $r['ref_no'], $r['memo'], Classes::name($r['class_id'] ?? null), $qtyOf[$r['id']] ?? 0, $r['status'],
-            ], $rows));
+            ], $rows), $title);
         }
-        csv_download($pageKey . '.csv', ['Date', 'Type', 'Number', 'Name', 'Reference', 'Class', 'Total', 'Status'], array_map(fn($r) => [
+        csv_download(preg_replace('/\W+/', '_', strtolower($title)) . '.xlsx', ['Date', 'Type', 'Number', 'Name', 'Reference', 'Class', 'Total', 'Status'], array_map(fn($r) => [
             $r['txn_date'], Txn::label($r['txn_type']), $r['txn_no'], $r['party'], $r['ref_no'], Classes::name($r['class_id'] ?? null), $r['total'], $r['status'],
-        ], $rows));
+        ], $rows), $title);
     }
 
     // v40: a paper clip beside the number of a document with attached files

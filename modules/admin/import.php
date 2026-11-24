@@ -9,6 +9,7 @@ declare(strict_types=1);
  * Nothing is written until the whole file has been read and checked, and the writing itself runs in one
  * transaction: a file with a bad line leaves the books exactly as they were.
  */
+require_once APP_ROOT . '/modules/txn/_common.php';   // tax_rate() and the other line helpers the documents are written with
 $pageKey = 'admin.import';
 $types = Importer::types();
 $type = (string)(g('type') ?: p('type'));
@@ -19,8 +20,12 @@ if (!isset($types[$type])) {
 // ------------------------------------------------------------------ blank template
 if (g('a') === 'template' && $type) {
     Access::require($pageKey, 'print');
-    [$head, $rows] = Importer::template($type);
-    csv_download('import_' . $type . '_template.csv', $head, $rows);
+    if (g('format') === 'csv') {
+        // the same columns as a CSV, for a program that does not open Excel workbooks
+        [$head, $rows] = Importer::template($type);
+        csv_file_download('import_' . $type . '_template.csv', $head, $rows);
+    }
+    Xlsx::download('import_' . $type . '_template.xlsx', Importer::workbook($type));
 }
 
 // ------------------------------------------------------------------ the import itself
@@ -48,17 +53,26 @@ handle_post(function () use (&$result, $type, $types, $pageKey) {
     }
     $up = $_FILES['file'] ?? null;
     if (!$up || ($up['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-        fail('Choose the CSV file to import.');
+        fail('Choose the file to import (the filled-in template, or a CSV).');
     }
     if ($up['error'] !== UPLOAD_ERR_OK) {
         fail('The file could not be uploaded' . (in_array($up['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) ? ': it is too large.' : '.'));
     }
-    if (!preg_match('/\.(csv|txt)$/i', (string)$up['name'])) {
-        fail('Choose a CSV file (.csv). In Excel: File > Save As > CSV (Comma delimited).');
+    if (!preg_match('/\.(xlsx|csv|txt)$/i', (string)$up['name'])) {
+        fail(preg_match('/\.xls$/i', (string)$up['name'])
+            ? 'This is an old Excel 97-2003 workbook (.xls). In Excel, save it as Excel Workbook (.xlsx), then choose it again.'
+            : 'Choose an Excel workbook (.xlsx) or a CSV file (.csv).');
     }
     $rows = Importer::read($up['tmp_name'], $type);
     $dry = p('mode') !== 'import';
-    $result = import_run($type, $rows, $dry, (string)$up['name'], $pageKey);
+    if (!$dry && $type === 'accounts') {
+        // accounts already there that the file would rename are shown first, never renamed in one step
+        $look = import_run($type, $rows, true, (string)$up['name'], $pageKey);
+        if (!$look['errors'] && import_account_renames($look)) {
+            [$result, $dry] = [$look + ['held' => true], true];
+        }
+    }
+    $result = $result ?? import_run($type, $rows, $dry, (string)$up['name'], $pageKey);
     if ($dry && !$result['errors']) {
         // keep the checked file, so it can be imported from the result without being chosen again
         $result['token'] = import_keep_checked($up['tmp_name'], $type, (string)$up['name']);
@@ -242,6 +256,63 @@ function import_check_records(string $type, array &$records, array &$errors): vo
             $known[$code] = $category;
         }
     }
+    import_mark_existing_accounts($records);
+}
+
+/**
+ * Marks the lines of a chart of accounts whose code is already an account: the import updates that account,
+ * so a line with another name renames it (with all that was posted to it, and any module default it is).
+ */
+function import_mark_existing_accounts(array &$records): void
+{
+    $codes = array_values(array_unique(array_filter(array_map(fn($r) => trim((string)$r['code']), $records), 'strlen')));
+    if (!$codes) {
+        return;
+    }
+    $in = implode(',', array_map(fn($c) => DB::pdo()->quote($c), $codes));
+    $have = [];
+    foreach (DB::all("SELECT id, code, name, account_type FROM accounts WHERE code IN ($in)") as $a) {
+        $have[(string)$a['code']] = $a;
+    }
+    if (!$have) {
+        return;
+    }
+    $ids = implode(',', array_map(fn($a) => (int)$a['id'], $have));
+    $posts = DB::pairs("SELECT account_id, COUNT(*) FROM journal_lines WHERE account_id IN ($ids) GROUP BY account_id");
+    $defaults = [];
+    foreach (DB::all("SELECT account_id, label FROM default_accounts WHERE account_id IN ($ids) ORDER BY label") as $d) {
+        $defaults[(int)$d['account_id']][] = (string)$d['label'];
+    }
+    foreach ($records as &$r) {
+        $a = $have[trim((string)$r['code'])] ?? null;
+        if (!$a) {
+            continue;
+        }
+        $norm = fn(string $v): string => mb_strtolower(preg_replace('/\s+/', ' ', trim($v)));
+        $r['_existing'] = [
+            'name' => (string)$a['name'], 'type' => (string)$a['account_type'],
+            'renamed' => $norm((string)$a['name']) !== $norm((string)$r['name']),
+            'posts' => (int)($posts[(int)$a['id']] ?? 0), 'defaults' => $defaults[(int)$a['id']] ?? [],
+        ];
+    }
+    unset($r);
+}
+
+/** "Credit balance (contra)" for a line whose normal balance is the other way from its account type, else '' */
+function import_contra_note(array $p): string
+{
+    $debitTypes = ['Bank', 'Accounts Receivable', 'Other Current Asset', 'Fixed Asset', 'Other Asset', 'Cost of Goods Sold', 'Expense', 'Other Expense'];
+    $nb = (string)($p['normal_balance'] ?? '');
+    if ($nb === '' || !in_array($nb, ['Debit', 'Credit'], true)) {
+        return '';
+    }
+    return ($nb === 'Debit') !== in_array((string)$p['account_type'], $debitTypes, true) ? $nb . ' balance (contra)' : '';
+}
+
+/** The lines of a checked chart of accounts that would rename an account already there */
+function import_account_renames(array $result): array
+{
+    return $result['type'] === 'accounts' ? array_values(array_filter($result['preview'], fn($p) => !empty($p['_existing']['renamed']))) : [];
 }
 
 function import_doc_total(string $type, array $read): float
@@ -1059,9 +1130,9 @@ foreach ($types as $k => $t) {
 $recent = DB::all('SELECT b.*, u.username FROM import_batches b LEFT JOIN users u ON u.id = b.created_by ORDER BY b.id DESC LIMIT 15');
 layout_start('Import from CSV', ['actions' => page_link('admin.backup', [], 'Backup & Restore', 'btn-outline-secondary', 'database')]);
 ?>
-<p class="text-muted small">Load records from a spreadsheet. Save the sheet as <strong>CSV</strong> in Excel, with the column names on the first line.
-  Download the template of the kind you are importing to get the exact columns; a column you do not need can be left out, and the order does not matter.
-  <strong>Check the file</strong> first: it reads the whole file and reports every problem without changing anything.</p>
+<p class="text-muted small">Load records from a spreadsheet. Download the template of the kind you are importing: it is an Excel workbook with the exact columns on row 1,
+  drop-down lists of the allowed values, and a How to fill sheet. Fill it in and save it as it is (.xlsx); a CSV file is read as well, whether its columns are split by commas, semicolons or tabs.
+  A column you do not need can be left out, and the order does not matter. <strong>Check the file</strong> first: it reads the whole file and reports every problem without changing anything.</p>
 
 <div class="row g-3">
   <div class="col-lg-5">
@@ -1078,9 +1149,10 @@ layout_start('Import from CSV', ['actions' => page_link('admin.backup', [], 'Bac
       </select>
       <?php if ($type): ?>
         <div class="form-text mb-2"><?= h($types[$type]['note']) ?></div>
-        <div class="mb-3"><a class="btn btn-sm btn-outline-secondary" href="<?= h(url($pageKey, ['a' => 'template', 'type' => $type])) ?>"><i class="bi bi-download"></i> Download the blank template</a></div>
-        <label class="form-label d-block">CSV file</label>
-        <input class="form-control form-control-sm" type="file" name="file" accept=".csv,text/csv,text/plain" required>
+        <div class="mb-3 import-template-links"><a class="btn btn-sm btn-outline-secondary" href="<?= h(url($pageKey, ['a' => 'template', 'type' => $type])) ?>"><i class="bi bi-file-earmark-excel"></i> Download the template (Excel)</a>
+          <a class="small" href="<?= h(url($pageKey, ['a' => 'template', 'type' => $type, 'format' => 'csv'])) ?>">or as CSV</a></div>
+        <label class="form-label d-block">File to import <span class="text-muted fw-normal">(.xlsx or .csv)</span></label>
+        <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain" required>
         <div class="d-flex gap-2 mt-3 flex-wrap">
           <button class="btn btn-primary" name="mode" value="check"><i class="bi bi-search"></i> Check the file</button>
           <button class="btn btn-outline-secondary" name="mode" value="import" data-confirm="Check and import this file in one step? Records are added to the books."><i class="bi bi-upload"></i> Check and import in one step</button>
@@ -1117,14 +1189,42 @@ layout_start('Import from CSV', ['actions' => page_link('admin.backup', [], 'Bac
       </ul>
     <?php elseif ($result['dry']): ?>
       <div class="import-ready">
+        <?php if (import_account_renames($result)): ?>
+        <p class="text-success mb-0"><i class="bi bi-check2-circle"></i> The file can be imported: nothing was written yet. Look over the accounts it renames first.</p>
+        <?php else: ?>
         <p class="text-success mb-0"><i class="bi bi-check2-circle"></i> The file is in order: nothing was written yet. Look the lines over, then import them.</p>
+        <?php endif; ?>
         <?php if (!empty($result['token'])): ?>
         <form method="post" data-no-class-check class="d-flex gap-2 flex-wrap"><?= csrf_field() ?>
           <input type="hidden" name="type" value="<?= h($result['type']) ?>"><input type="hidden" name="token" value="<?= h($result['token']) ?>">
-          <button class="btn btn-primary" name="mode" value="import_checked" data-confirm="Import the <?= (int)$result['count'] ?> checked line(s) now?"><i class="bi bi-upload"></i> Import these <?= (int)$result['count'] ?> <?= $result['type'] === 'items' ? 'item(s)' : 'record(s)' ?></button>
+          <button class="btn btn-primary" name="mode" value="import_checked" data-confirm="Import the <?= (int)$result['count'] ?> checked line(s) now?<?= ($rn = count(import_account_renames($result))) ? ' ' . $rn . ' account(s) already there will be renamed.' : '' ?>"><i class="bi bi-upload"></i> Import these <?= (int)$result['count'] ?> <?= $result['type'] === 'items' ? 'item(s)' : 'record(s)' ?></button>
         </form>
         <?php endif; ?>
       </div>
+      <?php if ($result['type'] === 'accounts'):
+          $renames = import_account_renames($result);
+          $updates = count(array_filter($result['preview'], fn($p) => !empty($p['_existing'])));
+      ?>
+        <div class="import-facts">
+          <div><span class="n"><?= count($result['preview']) - $updates ?></span> new account(s)</div>
+          <div><span class="n"><?= $updates ?></span> already there, to update</div>
+          <?php if ($renames): ?><div class="text-danger"><span class="n text-danger"><?= count($renames) ?></span> renamed</div><?php endif; ?>
+        </div>
+        <?php if ($renames): ?>
+        <div class="import-renames">
+          <p class="mb-1"><i class="bi bi-exclamation-triangle"></i> <?= !empty($result['held']) ? '<strong>Nothing was imported yet.</strong> ' : '' ?><?= count($renames) ?> line(s) use a code that already belongs to another account.
+            Importing does not add a new account for them: it renames the account that has the code, and what was posted to it stays there under the new name.
+            To keep those accounts, give these lines codes that are not used yet and check the file again.</p>
+          <ul class="mb-0">
+            <?php foreach ($renames as $p): $e = $p['_existing']; ?>
+              <li>Line <?= (int)$p['_line'] ?>: <strong><?= h((string)$p['code']) ?></strong> is <?= h($e['name']) ?> (<?= h($e['type']) ?>) and would become <?= h((string)$p['name']) ?><?=
+                  $e['posts'] ? ', with its ' . (int)$e['posts'] . ' posting' . ($e['posts'] === 1 ? '' : 's') : '' ?><?=
+                  $e['defaults'] ? '; it is the default account for ' . h(implode(', ', $e['defaults'])) : '' ?>.</li>
+            <?php endforeach; ?>
+          </ul>
+        </div>
+        <?php endif; ?>
+      <?php endif; ?>
       <?php if ($result['type'] === 'items'):
           $viewCostsHere = Access::viewCosts();
           $newItems = count(array_filter($result['preview'], fn($p) => empty($p['_existing'])));
@@ -1152,7 +1252,17 @@ layout_start('Import from CSV', ['actions' => page_link('admin.backup', [], 'Bac
               <td class="small"><?= $o ? qty($o['qty']) . ' at ' . h($o['site_name']) . ($viewCostsHere ? ', ' . money($o['value']) : '') . ', ' . h(fdate($o['date'])) : '' ?></td>
               <td class="small"><?= empty($p['_existing']) ? 'Added' : 'Updated (' . count(array_diff($p['_present'], ['code'])) . ' column' . (count(array_diff($p['_present'], ['code'])) === 1 ? '' : 's') . ')' ?></td></tr>
           <?php endforeach; ?>
-        <?php elseif (in_array($result['type'], ['accounts', 'customers', 'vendors', 'fixed_assets'], true)): ?>
+        <?php elseif ($result['type'] === 'accounts'): ?>
+          <thead><tr><th>Line</th><th>Account</th><th class="d-none d-sm-table-cell">Type</th><th>Will be</th></tr></thead>
+          <?php foreach (array_slice($result['preview'], 0, 200) as $p): $e = $p['_existing'] ?? null; ?>
+            <tr<?= $e && $e['renamed'] ? ' class="import-row-warn"' : '' ?>><td><?= (int)$p['_line'] ?></td>
+              <td><span class="fw-semibold"><?= h((string)$p['code']) ?></span> <?= h((string)$p['name']) ?></td>
+              <td class="small d-none d-sm-table-cell"><?= h(implode(', ', array_filter([(string)$p['account_type'],
+                  !empty($p['parent_code']) ? 'under ' . $p['parent_code'] : '', !empty($p['with_sl']) ? 'With SL' : '',
+                  import_contra_note($p)]))) ?></td>
+              <td class="small"><?= !$e ? 'Added' : ($e['renamed'] ? '<span class="text-danger">Renames ' . h($e['name']) . '</span>' : 'Updated') ?></td></tr>
+          <?php endforeach; ?>
+        <?php elseif (in_array($result['type'], ['customers', 'vendors', 'fixed_assets'], true)): ?>
           <thead><tr><th>Line</th><th>Name</th><th>Details</th></tr></thead>
           <?php foreach (array_slice($result['preview'], 0, 100) as $p): ?>
             <tr><td><?= (int)$p['_line'] ?></td>
@@ -1171,7 +1281,8 @@ layout_start('Import from CSV', ['actions' => page_link('admin.backup', [], 'Bac
           <?php endforeach; ?>
         <?php endif; ?>
       </table></div>
-      <?php if (count($result['preview']) > ($result['type'] === 'items' ? 200 : 100)): ?><div class="small text-muted mt-1">… and <?= count($result['preview']) - ($result['type'] === 'items' ? 200 : 100) ?> more.</div><?php endif; ?>
+      <?php $shown = in_array($result['type'], ['items', 'accounts'], true) ? 200 : 100; ?>
+      <?php if (count($result['preview']) > $shown): ?><div class="small text-muted mt-1">… and <?= count($result['preview']) - $shown ?> more.</div><?php endif; ?>
     <?php else: ?>
       <p class="text-success mb-2"><i class="bi bi-check2-circle"></i> <?= (int)$result['ok'] ?> <?= h(strtolower($def['label'])) ?> written.</p>
       <div class="table-responsive" style="max-height:320px"><table class="table table-sm table-tight mb-0">

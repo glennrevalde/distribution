@@ -2268,9 +2268,9 @@
 <td>Make another user an administrator first</td>
 </tr>
 <tr>
-<td>Choose a CSV file (.csv). In Excel: File &gt; Save As &gt; CSV (Comma delimited).</td>
-<td>The import file is not a CSV file</td>
-<td>Save the sheet as CSV and choose it again</td>
+<td>Choose an Excel workbook (.xlsx) or a CSV file (.csv).</td>
+<td>The import file is neither a workbook nor a CSV file</td>
+<td>Fill in the template (Excel) and choose it, or save the sheet as CSV</td>
 </tr>
 <tr>
 <td>The checked file is no longer here. Choose the file and check it again.</td>
@@ -2453,7 +2453,7 @@
 <li><code>platform.php</code> works only after multi-company has been set up.</li>
 </ul>
 <h4 id="s-scheduled-report-e-mails">Scheduled report e-mails<a class="man-hash" href="#s-scheduled-report-e-mails" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
-<p><code>send_scheduled_reports.php</code> sends every memorized report that has a daily, weekly or monthly schedule and an e-mail address, as a CSV attachment. Each report runs with the access of the user who memorized it; a report that user can no longer open is skipped. It uses PHP's <code>mail()</code>, so configure SMTP in <code>php.ini</code> (XAMPP: <code>sendmail.ini</code>). With several companies, one run sends the reports of every active company.</p>
+<p><code>send_scheduled_reports.php</code> sends every memorized report that has a daily, weekly or monthly schedule and an e-mail address, as an Excel workbook (.xlsx) attachment. Each report runs with the access of the user who memorized it; a report that user can no longer open is skipped. It uses PHP's <code>mail()</code>, so configure SMTP in <code>php.ini</code> (XAMPP: <code>sendmail.ini</code>). With several companies, one run sends the reports of every active company.</p>
 <p>Run it once a day:</p>
 <ul>
 <li>Linux (cron): <code>0 6 * * * php /path/to/gsmart-distribution/tools/send_scheduled_reports.php</code></li>
