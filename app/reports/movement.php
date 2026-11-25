@@ -45,7 +45,7 @@ function inv_move_kind_sql(): string
     return "CASE WHEN t.txn_type IN ('bill','item_receipt','check','cash_voucher') THEN 'purchases'
                  WHEN t.txn_type IN ('invoice','statement_charge','sales_receipt','pos_sale','credit_memo','pos_return') THEN 'sales'
                  WHEN t.txn_type = 'vendor_credit' THEN 'debit_memo'
-                 WHEN t.txn_type = 'inventory_transfer' THEN IF(m.qty < 0, 'trf_out', 'trf_in')
+                 WHEN t.txn_type IN ('inventory_transfer', 'inventory_dispatch') THEN IF(m.qty < 0, 'trf_out', 'trf_in')
                  WHEN t.txn_type = 'build_assembly' THEN IF(m.qty < 0, 'build_out', 'build_in')
                  WHEN t.txn_type = $proc THEN IF(m.qty < 0, 'proc_out', 'proc_in')
                  ELSE IF(m.qty < 0, 'adj_out', 'adj_in') END";

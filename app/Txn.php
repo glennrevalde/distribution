@@ -29,6 +29,8 @@ final class Txn
         'opening_balance'      => ['Opening Balance', 'coa.journal', 'journal'],
         'inventory_adjustment' => ['Inventory Adjustment', 'inv.adjust', 'adjustment'],
         'inventory_transfer'   => ['Inventory Transfer', 'inv.transfers', 'inv_transfer'],
+        // v4 distribution: stock sent from a site to a van or outlet, with loose kilos put into crates on the way
+        'inventory_dispatch'   => ['Inventory Dispatch', 'inv.dispatch', 'inv_dispatch'],
         'build_assembly'       => ['Build Assembly', 'inv.build', 'build'],
         'item_processing'      => ['Processing Order', 'inv.process', 'processing'],
         'pos_sale'             => ['POS Sale', 'pos.receipts', 'pos'],

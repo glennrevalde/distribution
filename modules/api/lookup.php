@@ -17,10 +17,14 @@ switch ($what) {
         json_out($v ?: []);
     case 'stock':
         $it = DB::row('SELECT id, item_type, unit FROM items WHERE id = :id', ['id' => (int)g('item')]);
+        $onHand = Stock::onHand((int)g('item'), gint('site'));
+        // v4: the quantity's unit, and what it is made of when the item has two or more units (the tooltip of the figure)
+        $parts = $it ? Stock::unitParts((int)$it['id'], gint('site'), (float)$onHand) : ['unit' => '', 'lines' => []];
         json_out([
-            'on_hand' => Stock::onHand((int)g('item'), gint('site')),
+            'on_hand' => $onHand,
             'tracked' => $it ? Stock::isTracked($it['item_type']) : false,
-            'unit' => $it['unit'] ?? '',
+            'unit' => $parts['unit'] !== '' ? $parts['unit'] : ($it['unit'] ?? ''),
+            'detail' => $parts['lines'],
         ]);
     default:
         json_out(['error' => 'unknown lookup'], 400);

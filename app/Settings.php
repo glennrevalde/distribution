@@ -143,6 +143,7 @@ final class Settings
         'vend.receive_items'   => 'Receive Items',
         'vend.bill_received'   => 'Enter Bill for Received Items',
         'inv.transfers'        => 'Transfer Inventory',
+        'inv.dispatch'         => 'Dispatch Inventory',
         'inv.adjust'           => 'Adjust Quantity/Value on Hand',
         'inv.build'            => 'Build Assemblies',
         'inv.process'          => 'Disassemble / Process Items',

@@ -1084,7 +1084,7 @@
 </tr>
 <tr>
 <td><strong>On hand at source</strong></td>
-<td>Filled in when you choose the item: the quantity at the From site.</td>
+<td>Filled in when you choose the item: the quantity at the From site, with its unit after it (<em>274 pack</em>). For an item with two units or more, hold the pointer over it (or tap it on a phone) to see what it is made of: in crates and loose, or in its other units.</td>
 </tr>
 <tr>
 <td><strong>Production / expiry date</strong></td>
@@ -1092,7 +1092,7 @@
 </tr>
 <tr>
 <td><strong>Qty to move</strong></td>
-<td>The quantity to move. For an item that keeps dates it is the total of the quantities typed for its date groups, and cannot be typed itself.</td>
+<td>The quantity to move, in the unit shown after the box (the item's base unit). For an item with two units or more, holding the pointer over the box shows the quantity in its other units, for example <em>= 2.25 box (20 pack each)</em>. For an item that keeps dates it is the total of the quantities typed for its date groups, and cannot be typed itself.</td>
 </tr>
 </tbody>
 </table></div>
@@ -1104,6 +1104,7 @@
 <li>Click <strong>Record transfer</strong> (or <strong>Record transfer &amp; New</strong>). The message "Transfer recorded. Quantities moved without changing total inventory value." appears and the transfer opens. If the From site does not have enough, the program first asks "Saving the transaction will lead the inventory to a negative balance. Do you want to continue?": <strong>Yes</strong> records it, <strong>No</strong> goes back to the transfer.</li>
 </ol>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/inv_transfers__view.jpg" title="Click to enlarge"><img src="assets/manual/img/inv_transfers__view.jpg" alt="The saved transfer IT-00003: 2 SET-OFFICE moved for the Makati store display" width="1094" height="391" loading="lazy" decoding="async"></a><figcaption>The saved transfer IT-00003: 2 SET-OFFICE moved for the Makati store display</figcaption></figure>
+<div class="man-callout man-note"><div class="man-callout-t"><i class="bi bi-info-circle"></i>Sending stock to a van or outlet</div><p>For stock going out to a van store or an outlet, <a href="manual.php?c=distribution#pg-inv-dispatch">Dispatch Inventory</a> does the same move with what the dispatch counter needs: crates picked by the figure the scale shows, and loose kilos put into new crates on the way out.</p></div>
 <h4 id="s-transfer-dates">Moving stock with production and expiry dates<a class="man-hash" href="#s-transfer-dates" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <p>With <strong>Track inventory production date and expiry date</strong> switched on, choosing an item that keeps dates opens a sub-form under its line: one row for each date group the <strong>From site</strong> holds, oldest first, with its <strong>Expiry date</strong>, <strong>Production date</strong>, <strong>Status</strong> (how long it has left, or how long ago it expired), <strong>On hand</strong> and a <strong>Qty to move</strong> box.</p>
 <ol>

@@ -372,6 +372,7 @@ final class Posting
                 $this->adjustment();
                 break;
             case 'inventory_transfer':
+            case 'inventory_dispatch':      // v4: a dispatch moves stock between sites as a transfer does
                 $this->transferStock();
                 break;
             case 'build_assembly':

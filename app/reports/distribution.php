@@ -198,7 +198,7 @@ Report::define('crate_movements', [
     'filters' => ['range', 'site', 'item'],
     'default_dates' => 'this_month',
     'extra_filters' => [
-        'kind' => ['What happened', fn() => ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos', 'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted'], 'Everything'],
+        'kind' => ['What happened', fn() => ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos', 'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted', 'pack' => 'Filled from loose stock'], 'Everything'],
     ],
     'run' => function (array $f): array {
         [$sf, $sp] = dist_site_sql('c.site_id');
@@ -226,7 +226,7 @@ Report::define('crate_movements', [
             $rows[] = [
                 'date' => $r['move_date'], 'crate' => $r['crate_no'], 'item' => $r['code'], 'desc' => $r['name'], 'what' => Crates::kindText($r['kind']) . (in_array($r['kind'], ['sale', 'shrink', 'shortage'], true) ? ((int)$r['whole'] ? ', whole' : ', part') : ($r['kind'] === 'adjust' ? ((float)$r['qty'] < 0 ? ', up' : ((int)$r['whole'] ? ', down to 0' : ', down')) : '')),
                 'doc' => $r['txn_no'] ? Txn::label($r['txn_type']) . ' ' . $r['txn_no'] : '', 'who' => $r['kind'] === 'transfer' ? $r['site'] . ' to ' . $r['site2'] : ($r['customer'] ?: $r['site']),
-                'in' => $r['kind'] === 'receive' ? (float)$r['qty'] : ($r['kind'] === 'adjust' && (float)$r['qty'] < 0 ? -(float)$r['qty'] : 0.0),
+                'in' => $r['kind'] === 'receive' || $r['kind'] === 'pack' ? (float)$r['qty'] : ($r['kind'] === 'adjust' && (float)$r['qty'] < 0 ? -(float)$r['qty'] : 0.0),
                 'out' => in_array($r['kind'], Crates::TAKE_KINDS, true) && (float)$r['qty'] > 0 ? (float)$r['qty'] : 0.0, 'unit' => $r['base_unit'] ?: 'kg',
                 'note' => $r['note'], 'user' => $r['user'],
                 '_links' => ['crate' => Report::link('inv.crates', ['a' => 'view', 'id' => $r['crate_id']]), 'doc' => $r['txn_id'] ? Report::txnLink(['txn_type' => $r['txn_type'], 'txn_id' => $r['txn_id']]) : null],

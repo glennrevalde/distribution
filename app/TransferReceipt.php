@@ -27,6 +27,7 @@ final class TransferReceipt
     public static function model(array $t): array
     {
         $id = (int)$t['id'];
+        $dispatch = ($t['txn_type'] ?? '') === 'inventory_dispatch';     // v4: Dispatch Inventory prints the same slip
         $s = Settings::all();
         $lines = array_values(array_filter(Txn::lines($id), fn($l) => !empty($l['item_id'])));
         // the crates of each line, with the weight each had when it moved (what it came in with, less what was taken
@@ -106,10 +107,10 @@ final class TransferReceipt
             $info[] = ['Memo', (string)$t['memo']];
         }
         return [
-            'company' => (string)$s['company_name'], 'address' => (string)$s['company_address'], 'title' => 'INVENTORY TRANSFER',
+            'company' => (string)$s['company_name'], 'address' => (string)$s['company_address'], 'title' => $dispatch ? 'INVENTORY DISPATCH' : 'INVENTORY TRANSFER',
             'txn_no' => (string)$t['txn_no'], 'voided' => (int)$t['is_voided'] === 1, 'info' => $info, 'rows' => $rows,
             'crates' => $crateCount, 'units' => $units, 'lines' => count($lines),
-            'signs' => [['Transferred by:', $by], ['Received by:', $recv]],
+            'signs' => [[$dispatch ? 'Dispatched by:' : 'Transferred by:', $by], ['Received by:', $recv]],
             'printed' => 'Printed ' . date('m/d/Y h:i A') . ' by ' . (string)(Auth::user()['full_name'] ?? ''),
         ];
     }
@@ -334,7 +335,7 @@ final class TransferReceipt
             return $y + $pad;
         };
         $height = max(200.0, $draw(null));
-        $pdf = new SimplePdf($pw, $height, 'Inventory Transfer ' . $m['txn_no']);
+        $pdf = new SimplePdf($pw, $height, ucwords(strtolower($m['title'])) . ' ' . $m['txn_no']);
         $pdf->addPage();
         $draw($pdf);
         return $pdf;
@@ -347,11 +348,12 @@ final class TransferReceipt
         $m = self::model($t);
         $mm = Receipt::width() <= 32 ? 58 : 80;
         $btOn = Receipt::btEnabled();
-        layout_start('Inventory Transfer ' . $t['txn_no'] . ' receipt', ['bare' => true, 'no_title' => true, 'js' => $btOn ? ['js/btprint.js'] : [], 'body_class' => 'tr-slip-page']);
+        $kind = Txn::label((string)$t['txn_type']);
+        layout_start($kind . ' ' . $t['txn_no'] . ' receipt', ['bare' => true, 'no_title' => true, 'js' => $btOn ? ['js/btprint.js'] : [], 'body_class' => 'tr-slip-page']);
         ?>
         <style>@media print { @page { size: <?= $mm ?>mm auto; margin: 2mm; } .tr-slip { width: <?= $mm - 6 ?>mm; max-width: none; box-shadow: none; border: 0; margin: 0; } }</style>
         <div class="no-print tr-slip-bar">
-          <div class="tr-slip-bar-title"><strong>Inventory Transfer <?= h($t['txn_no']) ?></strong><span><?= $mm ?> mm roll<?= $btOn ? ', Bluetooth printer on' : '' ?></span></div>
+          <div class="tr-slip-bar-title"><strong><?= h($kind) ?> <?= h($t['txn_no']) ?></strong><span><?= $mm ?> mm roll<?= $btOn ? ', Bluetooth printer on' : '' ?></span></div>
           <div class="tr-slip-actions">
             <button class="btn btn-primary btn-sm" type="button" onclick="window.print()" autofocus><i class="bi bi-printer"></i> Print</button>
             <?php if ($btOn): ?><button class="btn btn-outline-primary btn-sm" type="button" data-bt-print data-bt-ops="#btTransfer"><i class="bi bi-bluetooth"></i> Bluetooth printer</button><?php endif; ?>

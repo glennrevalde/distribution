@@ -82,6 +82,41 @@ final class Stock
     }
 
     /**
+     * v4: the unit a quantity of an item is in, and what that quantity is made of when the item has two or more units:
+     * the crates (or sacks) and the loose stock of an item kept in containers, and the quantity in each of the other
+     * units of its U/M set ("= 4.40 box (20 packs)"). ['unit' => 'kg', 'lines' => [...]] - no lines for a one-unit item.
+     */
+    public static function unitParts(int $itemId, ?int $siteId, float $qty): array
+    {
+        $units = Uom::unitsForItem($itemId);
+        $base = (string)(DB::value('SELECT s.base_unit FROM items i JOIN uom_sets s ON s.id = i.uom_set_id WHERE i.id = :i', ['i' => $itemId])
+            ?: DB::value('SELECT unit FROM items WHERE id = :i', ['i' => $itemId]) ?: '');
+        $lines = [];
+        $fig = fn(float $v): string => Crates::fig($v, $base);
+        if (Crates::ready() && Crates::crateUnit($itemId)) {
+            $p = ['i' => $itemId];
+            $w = "item_id = :i AND status = 'open'";
+            if ($siteId) {
+                $w .= ' AND site_id = :s';
+                $p['s'] = $siteId;
+            }
+            $c = DB::row("SELECT COUNT(*) AS n, COALESCE(SUM(qty_left),0) AS q FROM crates WHERE $w", $p);
+            $n = (int)$c['n'];
+            $name = strtolower(Crates::containerName($itemId, $n !== 1));
+            $lines[] = 'In ' . $n . ' ' . $name . ': ' . $fig((float)$c['q']) . ' ' . $base;
+            $lines[] = 'Loose, not in a ' . strtolower(Crates::containerName($itemId, false)) . ': ' . $fig(round($qty - (float)$c['q'], 4)) . ' ' . $base;
+        }
+        foreach ($units as $u) {
+            $f = (float)$u['factor'];
+            if ((int)($u['is_variable'] ?? 0) === 1 || abs($f - 1.0) < 0.0000001 || $f <= 0) {
+                continue;
+            }
+            $lines[] = '= ' . qty(round($qty / $f, 2)) . ' ' . $u['code'] . ' (' . qty($f) . ' ' . $base . ' each)';
+        }
+        return ['unit' => $base, 'lines' => $lines];
+    }
+
+    /**
      * v31: the quantity on the books: the total of the item's movements (at one site, or at all sites). The average cost
      * is always worked out on this quantity, so it is the remaining value divided by the remaining quantity of the same
      * movements.

@@ -295,7 +295,8 @@ function seed_master_data(): void
                 'inv.adjust' => 'CEP', 'inv.build' => 'CEP', 'inv.physical_count' => 'P',
                 'inv.process' => 'CEP', 'inv.formulas' => 'CEP', 'inv.uom' => 'CEP', 'rpt.processing_register' => 'P', 'rpt.process_yield' => 'P',
                 'vend.receive_items' => 'CEP', 'vend.purchase_orders' => 'P', 'vend.pickup' => 'CEP', 'vend.allocations' => 'P', 'vend.supplier_items' => 'P',
-                'inv.crates' => 'P', 'inv.crate_convert' => 'CP', 'inv.crate_move' => 'CP', 'group:Crate Reports' => 'P', 'rpt.alloc_pickup' => 'P',
+                'inv.crates' => 'P', 'inv.crate_convert' => 'CP', 'inv.crate_pack' => 'CP', 'inv.crate_move' => 'CP', 'group:Crate Reports' => 'P', 'rpt.alloc_pickup' => 'P',
+                'inv.dispatch' => 'CEP',
                 'inv.transfer_closing' => 'CP', 'inv.shortages' => 'P', 'group:Shortage and Shrinkage Reports' => 'P',
                 'rpt.qoh_by_site' => 'P', 'rpt.stock_status_item' => 'P', 'rpt.stock_status_vendor' => 'P', 'rpt.stock_status_site' => 'P',
                 'rpt.physical_worksheet' => 'P', 'rpt.pending_builds' => 'P', 'rpt.pending_builds_site' => 'P', 'rpt.negative_inventory' => 'P', 'rpt.inv_no_movement' => 'P',
@@ -632,6 +633,7 @@ function seed_master_data(): void
         ['processing', 'PRC-', 1, 5], ['cash_voucher', 'CAV-', 1, 5],
         ['maintenance', 'MNT-', 1, 5], ['debit_memo', 'DM-', 1, 5], ['vendor_advance', 'ADV-', 1, 5], ['advance_apply', 'AAP-', 1, 5],
         ['allocation', 'AL-', 1, 5], ['crate', '', 1, 1], ['transfer_closing', 'TC-', 1, 5], ['shortage', 'SHC-', 1, 5],
+        ['inv_dispatch', 'DSP-', 1, 5],
     ] as [$k, $pfx, $next, $pad]) {
         DB::insert('sequences', ['seq_key' => $k, 'prefix' => $pfx, 'next_no' => $next, 'pad' => $pad]);
     }

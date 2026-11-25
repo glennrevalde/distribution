@@ -47,6 +47,7 @@ $sites = DB::all(
 );
 $types = ['warehouse' => 'Warehouse', 'store' => 'Retail store', 'stockroom' => 'Stockroom', 'van' => 'Van store (van salesman)', 'damaged' => 'Damaged goods', 'other' => 'Other'];
 layout_start('Inventory Site List', ['actions' => page_link('inv.transfers', ['a' => 'new'], 'Transfer inventory', 'btn-outline-primary', 'arrow-left-right', 'create')
+    . ' ' . page_link('inv.dispatch', ['a' => 'new'], 'Dispatch inventory', 'btn-outline-primary', 'truck', 'create')
     . ' ' . page_link('rpt.qoh_by_site', [], 'Quantity on Hand by Site', 'btn-outline-secondary', 'bar-chart')]);
 ?>
 <div class="row g-3">

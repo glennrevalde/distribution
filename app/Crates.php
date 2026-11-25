@@ -19,6 +19,10 @@ declare(strict_types=1);
  *  - Moving crates to another site moves the crate with the stock (an inventory transfer is recorded).
  *  - v3: Adjust Quantity/Value on Hand adjusts crate by crate: the user types each crate's new weight (and the loose
  *    stock's), so the crates keep their own weights. An adjustment that names no crate may only change loose stock.
+ *  - v4: loose stock is put into crates (kilos to crates, packs to sacks: whatever the item's container unit is) on
+ *    Dispatch Inventory, as the stock leaves, or on Convert Kilos to Crates. The user picks the production / expiry
+ *    group the kilos come from and types each crate's weight (a "dispatch figure", 1330 = 13.30 kg); the quantity on
+ *    hand stays the same, the crates take the dates of the group, and from then on the stock is followed crate by crate.
  *  - Anything else that takes stock out without naming a crate (builds, processing, supplier returns, batch invoices,
  *    counts) takes loose stock first, then the oldest crates, so the crates never add up to more than what is on
  *    hand. Those are kept as "taken automatically" in each crate's history.
@@ -475,6 +479,10 @@ final class Crates
                         . qty($q) . ' ' . $unit . ' without naming a crate. Press Crates on the line and type the new weight of each crate adjusted, '
                         . 'so every crate keeps its own weight.');
                 }
+                if ($doing === 'dispatch') {
+                    fail($it['code'] . ' ' . $it['name'] . ' is kept in crates at ' . $site . ': ' . qty(max(0.0, $loose)) . ' ' . $unit . ' of it is loose, and this dispatch takes '
+                        . qty($q) . ' ' . $unit . ' of loose stock. Press Crates on the line to send the crates themselves, or dispatch less of the loose stock.');
+                }
                 if ($doing === 'transfer') {
                     fail($it['code'] . ' ' . $it['name'] . ' is kept in crates at ' . $site . ': ' . qty(max(0.0, $loose)) . ' ' . $unit . ' of it is loose, and this transfer moves '
                         . qty($q) . ' ' . $unit . ' without naming a crate. Press Crates on the line to move the crates themselves (they keep their numbers and dates), '
@@ -587,6 +595,27 @@ final class Crates
                     $count++;
                 }
                 $pairs[$line['item_id'] . ':' . $site] = 1;
+            } elseif ($dir === 'pack' && !$voided) {
+                // v4: loose kilos (or packs) of the site put into new crates, which then go with the dispatch to the other site
+                $to = (int)($t['site2_id'] ?? 0);
+                $unitCost = (float)$line['qty'] > 0 && (float)$line['cost_amount'] > 0 ? round((float)$line['cost_amount'] / (float)$line['qty'], 4)
+                    : TransferClosing::unitCost((int)$line['item_id']);
+                foreach ($data['rows'] as $r) {
+                    $cid = self::makePacked((int)$line['item_id'], $site, $r, $unitCost, (string)$t['txn_date'], $txnId, (int)$lineId, 'Packed from loose stock');
+                    if ($to && $to !== $site) {
+                        DB::insert('crate_movements', [
+                            'crate_id' => $cid, 'move_date' => $t['txn_date'], 'kind' => 'transfer', 'txn_id' => $txnId, 'line_id' => (int)$lineId,
+                            'qty' => 0, 'site_id' => $site, 'site2_id' => $to, 'created_by' => Auth::id(),
+                        ]);
+                        DB::update('crates', ['site_id' => $to], 'id = :id', ['id' => $cid]);
+                    }
+                    $touched[$cid] = 1;
+                    $count++;
+                }
+                $pairs[$line['item_id'] . ':' . $site] = 1;
+                if ($to) {
+                    $pairs[$line['item_id'] . ':' . $to] = 1;
+                }
             } elseif ($dir === 'move' && !$voided) {
                 $to = (int)($t['site2_id'] ?? 0);
                 foreach ($data['rows'] as $r) {
@@ -751,6 +780,13 @@ final class Crates
         return $n;
     }
 
+    /** v4: the open crate that already carries a number (any item), or null */
+    public static function numberInUse(string $no): ?array
+    {
+        $no = trim($no);
+        return $no === '' ? null : DB::row("SELECT c.id, c.crate_no, i.code FROM crates c JOIN items i ON i.id = c.item_id WHERE c.crate_no = :n AND c.status = 'open' LIMIT 1", ['n' => $no]);
+    }
+
     /** Two open crates can never carry the same number (a crate is one physical container) */
     private static function assertNoFree(string $no, ?int $selfId): void
     {
@@ -855,6 +891,232 @@ final class Crates
         });
     }
 
+    // ------------------------------------------------------------------ v4: putting loose stock into crates
+
+    /** "Kilos to Crates", "Packs to Sacks": converting an item's loose base units into its container unit, or '' */
+    public static function convertLabel(int $itemId): string
+    {
+        $u = self::crateUnit($itemId);
+        if (!$u) {
+            return '';
+        }
+        return self::plural(self::baseWord((string)$u['base_unit'])) . ' to ' . self::containerName($itemId);
+    }
+
+    /** The container of an item, as the screens name it: "Crates", "Sacks" ($plural false: "Crate") */
+    public static function containerName(int $itemId, bool $plural = true): string
+    {
+        $u = self::crateUnit($itemId);
+        $w = $u ? trim((string)preg_replace('/\s*\(.*$/', '', (string)$u['name'])) : '';
+        $w = $w !== '' ? ucfirst($w) : ($u ? strtoupper((string)$u['code']) : 'Crate');
+        return $plural ? self::plural($w) : $w;
+    }
+
+    private static function baseWord(string $base): string
+    {
+        $b = strtolower(trim($base));
+        if ($b === '' || in_array($b, ['kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms'], true)) {
+            return 'Kilo';
+        }
+        return ['pc' => 'Piece', 'pcs' => 'Piece', 'g' => 'Gram', 'lb' => 'Pound', 'lbs' => 'Pound', 'l' => 'Liter'][$b] ?? ucfirst($b);
+    }
+
+    private static function plural(string $w): string
+    {
+        if ($w === '' || preg_match('/s$/i', $w)) {
+            return $w;
+        }
+        if (preg_match('/[^aeiou]y$/i', $w)) {
+            return substr($w, 0, -1) . 'ies';
+        }
+        return preg_match('/(ch|sh|x|z)$/i', $w) ? $w . 'es' : $w . 's';
+    }
+
+    /**
+     * The groups of an item's loose stock at a site that can go into crates: with production and expiry dates kept,
+     * one per date group (what the group holds less what its open crates hold); otherwise one group without dates.
+     * [['key', 'prod', 'exp', 'qty', 'label', 'status', 'days', 'dated'], ...], oldest first. With $txnId, what that
+     * document did is counted back in (it is being edited).
+     */
+    public static function looseGroups(int $itemId, int $siteId, ?int $txnId = null): array
+    {
+        $loose = max(0.0, self::looseFor($itemId, $siteId, $txnId));
+        $none = ['key' => Lots::key(null, null), 'prod' => null, 'exp' => null, 'label' => 'No production or expiry date', 'status' => 'ok', 'days' => null, 'dated' => false];
+        if (!Lots::on() || !Lots::itemTracked($itemId)) {
+            return $loose > self::EPS ? [$none + ['qty' => round($loose, 4)]] : [];
+        }
+        $groups = Lots::forItems([$itemId], $siteId, $txnId)[$itemId] ?? [];
+        // the open crates hold their own date group first; kilos in crates whose dates no group has come off the oldest groups
+        $inCrates = [];
+        foreach (self::open($itemId, $siteId, $txnId) as $c) {
+            $k = Lots::key($c['production_date'] ?: null, $c['expiry_date'] ?: null);
+            $inCrates[$k] = ($inCrates[$k] ?? 0.0) + (float)$c['qty_left'];
+        }
+        foreach ($groups as &$g) {
+            $take = min((float)$g['qty'], $inCrates[$g['key']] ?? 0.0);
+            $g['qty'] = round((float)$g['qty'] - $take, 4);
+            if (isset($inCrates[$g['key']])) {
+                $inCrates[$g['key']] = round($inCrates[$g['key']] - $take, 4);
+            }
+        }
+        unset($g);
+        $rest = array_sum(array_map(fn($v) => max(0.0, $v), $inCrates));
+        foreach ($groups as &$g) {
+            if ($rest <= self::EPS) {
+                break;
+            }
+            $take = min((float)$g['qty'], $rest);
+            $g['qty'] = round((float)$g['qty'] - $take, 4);
+            $rest = round($rest - $take, 4);
+        }
+        unset($g);
+        $out = [];
+        $sum = 0.0;
+        foreach ($groups as $g) {
+            // never more than the loose stock of the site in all
+            $q = round(min((float)$g['qty'], $loose - $sum), 4);
+            if ($q <= self::EPS) {
+                continue;
+            }
+            $sum += $q;
+            $dated = $g['prod'] || $g['exp'];
+            $out[] = ['key' => $g['key'], 'prod' => $g['prod'], 'exp' => $g['exp'], 'qty' => $q, 'label' => $dated ? Lots::label($g['prod'], $g['exp']) : $none['label'],
+                'status' => $g['status'], 'days' => $g['days'], 'dated' => (bool)$dated];
+        }
+        return $out;
+    }
+
+    /**
+     * The crates typed in the pack window of a line ($row['crates']: [{no, pcs, qty}], $row['pack_lot']: the group the
+     * loose stock comes from, $row['pack_prod'] / $row['pack_exp']: dates typed for a group without dates).
+     * $used carries what earlier lines of the same document packed (group and crate numbers), so two lines can not
+     * pack the same kilos or use the same number. Returns null when the line packs nothing, else
+     * ['dir' => 'pack', 'rows' => [[no, pcs, qty, prod, exp]], 'qty', 'count', 'prod', 'exp', 'key'].
+     */
+    public static function packRows(array $row, int $itemId, string $label, int $siteId, ?int $txnId, ?string $txnDate, array &$used): ?array
+    {
+        $raw = $row['crates'] ?? '';
+        $list = is_array($raw) ? $raw : (trim((string)$raw) !== '' ? json_decode((string)$raw, true) : null);
+        if (!is_array($list) || !$list) {
+            return null;
+        }
+        if (!self::crateUnit($itemId)) {
+            fail($label . ' has no container unit (a unit marked "weight varies" in its U/M set): it can not be put into crates.');
+        }
+        $groups = [];
+        foreach (self::looseGroups($itemId, $siteId, $txnId) as $g) {
+            $groups[$g['key']] = $g;
+        }
+        $key = (string)($row['pack_lot'] ?? '');
+        if ($key === '' && count($groups) === 1) {
+            $key = (string)array_key_first($groups);
+        }
+        $g = $groups[$key] ?? null;
+        $unit = self::baseUnit($itemId);
+        $site = (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => $siteId]);
+        if (!$g) {
+            fail($label . ': ' . ($groups ? 'choose the production / expiry group the loose stock comes from' : 'there is no loose stock of it at ' . $site . ' to put into ' . strtolower(self::containerName($itemId))) . '.');
+        }
+        if ($g['dated']) {
+            [$prod, $exp] = [$g['prod'], $g['exp']];
+        } else {
+            $prod = Lots::date($row['pack_prod'] ?? '', 'production date');
+            $exp = Lots::date($row['pack_exp'] ?? '', 'expiry date');
+            Lots::check($prod, $exp, $label, false, $txnDate);
+        }
+        $rows = [];
+        $total = 0.0;
+        foreach (array_values($list) as $i => $c) {
+            $q = round(to_num($c['qty'] ?? 0), 4);
+            $no = mb_substr(trim((string)($c['no'] ?? '')), 0, 30);
+            if ($q <= 0 && $no === '') {
+                continue;
+            }
+            $name = self::containerName($itemId, false) . ' ' . ($no !== '' ? $no : '#' . ($i + 1));
+            if ($q <= 0) {
+                fail('Type the weight of ' . strtolower($name) . ' of ' . $label . '.');
+            }
+            if ($no !== '') {
+                $k = mb_strtolower($no);
+                if (isset($used['nos'][$k])) {
+                    fail('Crate number ' . $no . ' is typed twice on this document.');
+                }
+                $used['nos'][$k] = 1;
+                if ($clash = self::numberInUse($no)) {
+                    fail('Crate number ' . $no . ' is already in use by an open crate of ' . $clash['code'] . '. Use another number, or finish that crate first.');
+                }
+            }
+            $rows[] = ['no' => $no, 'pcs' => max(0.0, round(to_num($c['pcs'] ?? 0), 2)), 'qty' => $q, 'prod' => $prod, 'exp' => $exp];
+            $total += $q;
+        }
+        if (!$rows) {
+            return null;
+        }
+        $k = $itemId . '#' . $key;
+        $used['qty'][$k] = round(($used['qty'][$k] ?? 0.0) + $total, 4);
+        if ($used['qty'][$k] > (float)$g['qty'] + self::EPS) {
+            fail($label . ': only ' . self::fig($g['qty'], $unit) . ' ' . $unit . ' of ' . ($g['dated'] ? 'the group ' . $g['label'] : 'it') . ' is loose at ' . $site
+                . ', and ' . self::fig($used['qty'][$k], $unit) . ' ' . $unit . ' is being put into ' . strtolower(self::containerName($itemId)) . '. Lower the weights, or choose another group.');
+        }
+        return ['dir' => 'pack', 'rows' => $rows, 'qty' => round($total, 4), 'count' => count($rows), 'prod' => $prod, 'exp' => $exp, 'key' => $key];
+    }
+
+    /** One crate made from loose stock, with its 'pack' movement. Returns its id. */
+    private static function makePacked(int $itemId, int $siteId, array $r, float $unitCost, string $date, ?int $txnId, ?int $lineId, string $note): int
+    {
+        $no = self::takeNo(($r['no'] ?? '') !== '' ? (string)$r['no'] : null);
+        self::assertNoFree($no, null);
+        $id = DB::insert('crates', [
+            'crate_no' => $no, 'item_id' => $itemId, 'site_id' => $siteId, 'vendor_id' => null,
+            'receive_txn_id' => $txnId, 'receive_line_id' => $lineId, 'received_date' => $date, 'pcs' => (float)($r['pcs'] ?? 0),
+            'qty_in' => (float)$r['qty'], 'qty_left' => (float)$r['qty'], 'unit_cost' => $unitCost,
+            'production_date' => $r['prod'] ?: null, 'expiry_date' => $r['exp'] ?: null, 'status' => 'open', 'created_by' => Auth::id(),
+        ]);
+        DB::insert('crate_movements', [
+            'crate_id' => $id, 'move_date' => $date, 'kind' => 'pack', 'txn_id' => $txnId, 'line_id' => $lineId,
+            'qty' => (float)$r['qty'], 'site_id' => $siteId, 'note' => mb_substr($note, 0, 255), 'created_by' => Auth::id(),
+        ]);
+        return $id;
+    }
+
+    /**
+     * Convert Kilos to Crates: loose stock of a site put into crates where it is (no document; nothing is posted, the
+     * quantity and value on hand stay the same). $data is what packRows() returned. Returns the number of crates.
+     */
+    public static function packAt(int $itemId, int $siteId, array $data, string $note, string $date): int
+    {
+        return DB::tx(function () use ($itemId, $siteId, $data, $note, $date) {
+            if (!Access::siteAllowed($siteId)) {
+                fail('You are not allowed to work with the stock of that site.');
+            }
+            DB::row('SELECT id FROM items WHERE id = :i FOR UPDATE', ['i' => $itemId]);
+            // checked again inside the transaction: the loose stock may have moved since the page was opened
+            $have = 0.0;
+            foreach (self::looseGroups($itemId, $siteId) as $g) {
+                if ($g['key'] === $data['key']) {
+                    $have = (float)$g['qty'];
+                }
+            }
+            $unit = self::baseUnit($itemId);
+            if ((float)$data['qty'] > $have + self::EPS) {
+                fail('Only ' . self::fig($have, $unit) . ' ' . $unit . ' of that group is loose now. Open the window again and lower the weights.');
+            }
+            $cost = TransferClosing::unitCost($itemId);
+            $n = 0;
+            foreach ($data['rows'] as $r) {
+                $cid = self::makePacked($itemId, $siteId, $r, $cost, $date, null, null, 'Packed from loose stock' . ($note !== '' ? '. ' . $note : ''));
+                self::recompute($cid);
+                $n++;
+            }
+            $code = (string)DB::value('SELECT code FROM items WHERE id = :i', ['i' => $itemId]);
+            Audit::log('crate_pack', 'inv', 'item', $itemId, $code . ': ' . $n . ' ' . strtolower(self::containerName($itemId, $n !== 1)) . ' packed', [
+                'reason' => $note !== '' ? $note : 'Loose stock put into crates', 'amount' => (float)$data['qty'], 'page_key' => 'inv.crate_pack', 'site_id' => $siteId,
+            ]);
+            self::reconcile($itemId, $siteId, null, $date);
+            return $n;
+        });
+    }
+
     // ------------------------------------------------------------------ showing crates
 
     /** The crates of a document's lines: line id => [crate rows with the quantity the line put in or took] */
@@ -866,7 +1128,7 @@ final class Crates
         $out = [];
         // w_before: what the crate held just before this movement (a transfer shows the weight it went with, even
         // after the crate was sold at the site it went to)
-        foreach (DB::all("SELECT m.line_id, m.qty, m.whole, m.kind, c.id AS crate_id, c.crate_no, c.pcs, c.qty_in, c.qty_left, c.production_date, c.expiry_date, c.status,
+        foreach (DB::all("SELECT m.line_id, m.qty, m.whole, m.kind, c.id AS crate_id, c.crate_no, c.pcs, c.qty_in, c.qty_left, c.production_date, c.expiry_date, c.status, c.receive_txn_id,
                                  c.qty_in - COALESCE((SELECT SUM(x.qty) FROM crate_movements x WHERE x.crate_id = m.crate_id AND x.id < m.id
                                                        AND x.kind IN (" . self::sqlKinds(self::TAKE_KINDS) . ")), 0) AS w_before
                             FROM crate_movements m JOIN crates c ON c.id = m.crate_id
@@ -913,7 +1175,7 @@ final class Crates
     public static function signedFig(array $m, ?string $base): string
     {
         $q = (float)$m['qty'];
-        if ($m['kind'] === 'receive') {
+        if ($m['kind'] === 'receive' || $m['kind'] === 'pack') {
             return '+' . self::fig($q, $base);
         }
         if (!in_array($m['kind'], self::TAKE_KINDS, true) || abs($q) <= self::EPS) {
@@ -930,6 +1192,6 @@ final class Crates
     public static function kindText(string $kind): string
     {
         return ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos',
-            'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted'][$kind] ?? ucfirst($kind);
+            'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted', 'pack' => 'Packed from loose stock'][$kind] ?? ucfirst($kind);
     }
 }

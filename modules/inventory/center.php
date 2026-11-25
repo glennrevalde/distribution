@@ -115,6 +115,7 @@ layout_start('Inventory Center', ['actions' => $newMenu]);
         <?= page_link('vend.purchase_orders', ['a' => 'new', 'vendor_id' => $sel['preferred_vendor_id']], 'Purchase order', 'btn-outline-success', 'cart-plus', 'create') ?>
         <?= page_link('inv.adjust', ['item_id' => $sel['id']], 'Adjust', 'btn-outline-success', 'sliders', 'create') ?>
         <?= page_link('inv.transfers', ['a' => 'new', 'item_id' => $sel['id']], 'Transfer', 'btn-outline-success', 'arrow-left-right', 'create') ?>
+        <?= page_link('inv.dispatch', ['a' => 'new', 'item_id' => $sel['id']], 'Dispatch', 'btn-outline-success', 'truck', 'create') ?>
         <?= $sel['item_type'] === 'assembly' ? page_link('inv.build', ['a' => 'new', 'item_id' => $sel['id']], 'Build', 'btn-outline-success', 'hammer', 'create') : '' ?>
         <?= Stock::isTracked($sel['item_type']) ? page_link('inv.process', ['a' => 'new', 'item_id' => $sel['id']], $sel['item_type'] === 'assembly' ? 'Disassemble' : 'Process / break down', 'btn-outline-success', 'diagram-3', 'create') : '' ?>
         <?= page_link('rpt.inv_valuation_detail', ['item_id' => $sel['id']], 'Valuation detail', 'btn-outline-secondary', 'bar-chart') ?>

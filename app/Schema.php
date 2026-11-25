@@ -141,6 +141,10 @@ final class Schema
                    + (SELECT COUNT(rep_type) + COUNT(customer_id) FROM sales_reps WHERE 1 = 0)
                    + (SELECT COUNT(sales_rep_id) FROM sites WHERE 1 = 0)
                    + (SELECT COUNT(*) FROM transfer_closings WHERE 1 = 0) + (SELECT COUNT(*) FROM transfer_closing_lines WHERE 1 = 0)', 3],
+        // distribution v4: Dispatch Inventory (its number series) and Convert Kilos to Crates
+        'database/migrations/2027_03_22_dispatch_inventory.sql' =>
+            ['SELECT (SELECT COUNT(*) FROM pages WHERE page_key IN (\'inv.dispatch\', \'inv.crate_pack\'))
+                   + (SELECT COUNT(*) FROM sequences WHERE seq_key = \'inv_dispatch\')', 3],
     ];
 
     private static ?array $pending = null;

@@ -316,6 +316,12 @@
 <td>Stock only</td>
 </tr>
 <tr>
+<td>Inventory Dispatch</td>
+<td><a href="manual.php?c=distribution#pg-inv-dispatch">Dispatch Inventory</a></td>
+<td>DSP-</td>
+<td>Stock only</td>
+</tr>
+<tr>
 <td>Build Assembly</td>
 <td><a href="manual.php?c=inventory#pg-inv-build">Build Assemblies</a></td>
 <td>BLD-</td>
@@ -802,6 +808,14 @@
 <li><strong>Ledger:</strong> nothing, because both sites use the same inventory account. The page confirms <em>Quantities moved without changing total inventory value.</em></li>
 <li><strong>Stock:</strong> the quantity leaves the <strong>from</strong> site at the item's average cost and arrives at the <strong>to</strong> site with the same value.</li>
 <li><strong>Editing:</strong> a transfer can be edited (date, sites, lines); the stock moves again.</li>
+</ul>
+<h4 id="s-inventory-dispatch">Inventory Dispatch<a class="man-hash" href="#s-inventory-dispatch" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
+<p>Entered on <a href="manual.php?c=distribution#pg-inv-dispatch">Dispatch Inventory</a>.</p>
+<ul>
+<li><strong>Ledger:</strong> nothing, as for a transfer.</li>
+<li><strong>Stock:</strong> the quantity leaves the <strong>from</strong> site at the item's average cost and arrives at the <strong>to</strong> site with the same value, with its production and expiry dates.</li>
+<li><strong>Crates:</strong> crates named on a line move whole to the <strong>to</strong> site. Crates filled with <strong>Kilos to Crates</strong> are made at the <strong>from</strong> site out of its loose stock (history: <em>Packed from loose stock</em>), then moved.</li>
+<li><strong>Editing:</strong> a dispatch without crates can be edited; one that moved or filled crates is voided and entered again. Voiding brings the crates back and takes the filled ones apart into loose stock again, unless one has been sold or moved since.</li>
 </ul>
 <h4 id="s-build-assembly">Build Assembly<a class="man-hash" href="#s-build-assembly" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <p>Entered on <a href="manual.php?c=inventory#pg-inv-build">Build Assemblies</a>.</p>
@@ -1728,6 +1742,11 @@
 <td>IT-</td>
 <td>IT-00001</td>
 <td>Inventory transfers</td>
+</tr>
+<tr>
+<td>DSP-</td>
+<td>DSP-00001</td>
+<td>Inventory dispatches</td>
 </tr>
 <tr>
 <td>BLD-</td>

@@ -744,7 +744,7 @@ tr.move-convert td:nth-child(2) { color: #6d4fb3; }
 }
 
 /* the crate window: heads and dates copied down to the crates below */
-tr.row-copied input:not(.crate-kg) { animation: copiedIn .8s ease-out; }
+tr.row-copied input:not(.crate-kg):not([type="checkbox"]):not([type="radio"]) { animation: copiedIn .8s ease-out; }
 @keyframes copiedIn { from { background-color: #dcecf7; } to { background-color: #fff; } }
 
 .report-table tr.void-row td { color: var(--steel); }
@@ -984,3 +984,179 @@ html.pwa-standalone [data-pwa-install], html.pwa-standalone [data-pwa-box] { dis
 .import-renames li + li { margin-top: .15rem; }
 .import-preview tr.import-row-warn > td { background: rgba(var(--bs-danger-rgb), .06); }
 .import-template-links { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem .75rem; }
+
+/* ------------------------------------------------------------------ v4: quantities with their unit, Dispatch Inventory, filling crates */
+.qty-fig { font-weight: 600; font-variant-numeric: tabular-nums; }
+.qty-unit { margin-left: .1rem; font-size: .8em; font-weight: 500; color: var(--steel); }
+td.tr-avail { white-space: nowrap; }
+td.tr-avail.has-qty-tip { cursor: help; }
+td.tr-avail.has-qty-tip .qty-fig { border-bottom: 1px dashed var(--steel-2); }
+td.tr-avail.has-qty-tip:focus-visible { outline: 2px solid var(--cold); outline-offset: 2px; border-radius: 4px; }
+.qty-unit-group { flex-wrap: nowrap; min-width: 150px; }
+.qty-unit-group .form-control { min-width: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.qty-unit-group .input-group-text { min-width: 3.2rem; justify-content: center; font-size: .78rem; font-weight: 600; color: var(--steel); background: var(--panel-2); }
+.qty-unit-group.has-qty-tip .input-group-text { color: var(--cold); background: var(--cold-tint); border-color: #b9d3e5; cursor: help; }
+.qty-tooltip { --bs-tooltip-bg: var(--rail); --bs-tooltip-opacity: 1; --bs-tooltip-max-width: 320px; }
+.qty-tooltip .tooltip-inner { text-align: left; padding: .55rem .7rem; font-size: .8rem; line-height: 1.45; border-radius: 8px; box-shadow: 0 14px 30px -14px rgba(6, 22, 34, .6); }
+.qty-tooltip .qt-title { font-weight: 700; color: #fff; margin-bottom: .2rem; }
+.qty-tooltip .qt-line { color: var(--rail-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.ds-table .ds-conv { min-width: 152px; }
+.ds-table .ds-conv:disabled { color: var(--steel-2); background-color: var(--panel-2); }
+.ds-table td.ds-qty-cell { min-width: 170px; }
+.ds-table .crate-btn.is-pack { border-style: dashed; }
+.ds-table .crate-btn.is-pack.has-crates { border-style: solid; }
+.ds-total { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: .25rem .75rem; margin-top: .75rem; padding-top: .65rem; border-top: 1px solid var(--line-soft); font-size: .86rem; color: var(--steel); }
+.ds-total strong { font-family: var(--font-gauge); font-size: 1.15rem; font-weight: 400; color: var(--ink); letter-spacing: .02em; }
+.ds-help { max-width: 70rem; }
+.ds-help p { margin-bottom: .35rem; }
+.ds-help .bi { color: var(--crate-deep); margin-right: .2rem; }
+
+/* the crate window: Find figure, dispatch figures, the exact weight found */
+.crate-figfind { display: inline-flex; align-items: center; gap: .4rem; }
+.crate-figfind input { width: 205px; font-family: var(--font-gauge); }
+.crate-figcount { font-size: .76rem; font-weight: 600; color: var(--cold); min-width: 3.5rem; }
+.crate-pick tbody tr.is-exact > td { background: var(--cold-tint); }
+.crate-pick tbody tr.is-exact > td:first-child { box-shadow: inset 3px 0 0 var(--cold); }
+.crate-pick tbody tr.is-exact.is-picked > td { background: var(--crate-tint); }
+.crate-pick td.crate-dfig { min-width: 112px; }
+.crate-pick td.crate-dfig input { width: 100px; margin-left: auto; font-family: var(--font-gauge); font-size: .95rem; }
+.crate-pick td.crate-dfig small { display: block; min-height: 1em; font-size: .7rem; color: var(--steel); text-align: right; white-space: nowrap; }
+.crate-pick td.crate-dfig input.is-valid { border-color: var(--ok); background-image: none; padding-right: .5rem; }
+.crate-pick td.crate-dfig input.is-invalid { background-image: none; padding-right: .5rem; }
+tr.row-copied > td { animation: rowNew 1s ease-out; }
+
+/* filling crates from loose stock: the group the kilos come from, then one row per crate */
+.pack-groups { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); padding: .7rem .8rem; margin-bottom: .8rem; box-shadow: var(--sunk); }
+.pack-groups-head { font-size: .78rem; font-weight: 600; color: var(--steel); margin-bottom: .5rem; }
+.pack-group-list { display: flex; flex-wrap: wrap; gap: .55rem; }
+.pack-group { display: flex; align-items: flex-start; gap: .55rem; min-width: 190px; margin: 0; padding: .55rem .75rem; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; box-shadow: 0 2px 0 var(--line); transition: border-color .15s var(--ease), background .15s var(--ease), transform .15s var(--ease); }
+.pack-group:hover { border-color: var(--crate-deep); }
+.pack-group:active { transform: translateY(1px); }
+.pack-group .form-check-input { margin-top: .2rem; flex: 0 0 auto; }
+.pack-group.is-on { border-color: var(--crate-deep); background: var(--crate-tint); box-shadow: 0 2px 0 var(--crate-deep); }
+.pack-group-text { display: flex; flex-direction: column; line-height: 1.25; }
+.pack-group-text strong { font-size: .9rem; color: var(--ink); }
+.pack-group-text strong small { display: block; font-weight: 400; font-size: .74rem; color: var(--steel); }
+.pack-group-qty { margin-top: .2rem; font-family: var(--font-gauge); font-size: .88rem; color: var(--ink-2); }
+.pack-group.is-expired .pack-group-text strong { color: var(--bad); }
+.pack-group.is-near .pack-group-text strong { color: var(--warn); }
+.pack-dates { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem .8rem; margin-top: .7rem; }
+.pack-dates[hidden] { display: none; }
+.pack-dates label { display: flex; flex-direction: column; gap: .2rem; margin: 0; font-size: .78rem; font-weight: 600; color: var(--ink-2); }
+.pack-dates input { width: 160px; }
+.pack-dates .crate-hint { flex: 1 1 220px; }
+.crate-pack input.crate-fig { width: 112px; margin-left: auto; font-family: var(--font-gauge); font-weight: 700; font-size: 1rem; letter-spacing: .03em; }
+.crate-pack input.crate-kg { background: var(--panel-2); }
+.crate-pack tfoot tr.pack-left th { font-weight: 500; color: var(--steel); border-top: 0; padding-top: 0; }
+.crate-pack tfoot tr.pack-left.is-over th { color: var(--bad); font-weight: 700; }
+.crate-modal.is-pack .scale-readout { background: var(--scale-face); }
+
+@media (max-width: 575.98px) {
+  .crate-figfind { flex: 1 1 100%; }
+  .crate-figfind input { flex: 1 1 auto; width: auto; }
+  .pack-group { flex: 1 1 100%; }
+  .pack-dates input { width: 100%; }
+  .pack-dates label { flex: 1 1 45%; }
+  .crate-pack thead { display: none; }
+  .crate-pack, .crate-pack tbody, .crate-pack tfoot { display: block; }
+  .crate-pack tbody tr { display: grid; grid-template-columns: 1fr 1fr auto; gap: .3rem .5rem; padding: .55rem .2rem; border-bottom: 1px solid var(--line-soft); }
+  .crate-pack tbody td { display: block; border: 0; padding: 0; text-align: left !important; background: none !important; box-shadow: none !important; }
+  .crate-table.crate-pack tbody input.crate-kg, .crate-table.crate-pack tbody input.crate-fig { width: 100%; margin-left: 0; }
+  .crate-pack tbody td.crate-seq { display: none; }
+  .crate-pack tbody td:nth-child(2) { grid-column: 1; }
+  .crate-pack tbody td:nth-child(3) { grid-column: 2; }
+  .crate-pack tbody td:nth-child(4) { grid-column: 1; }
+  .crate-pack tbody td:nth-child(5) { grid-column: 2; }
+  .crate-pack tbody td:nth-child(6) { grid-column: 3; grid-row: 1 / span 2; align-self: center; }
+  .crate-pack tbody td:nth-child(2)::before { content: "No."; }
+  .crate-pack tbody td:nth-child(3)::before { content: "Heads"; }
+  .crate-pack tbody td:nth-child(4)::before { content: "Dispatch figure"; }
+  .crate-pack tbody td:nth-child(5)::before { content: "Weight"; }
+  .crate-pack tbody td::before { display: block; font-size: .7rem; font-weight: 500; color: var(--steel); }
+  .crate-pack tbody input, .crate-pack input.crate-fig, .crate-table.crate-pack input[data-c="no"], .crate-table.crate-pack input[data-c="pcs"] { width: 100%; }
+  .crate-pack tfoot tr { display: flex; justify-content: space-between; gap: .5rem; padding: .4rem .2rem; }
+  .crate-pack tfoot th { border: 0; padding: 0; }
+  .crate-pack tfoot th:empty { display: none; }
+
+  /* Dispatch Inventory on a phone: the item across the line; on hand and conversion under it; the quantity and the crates under them */
+  #dsTable > thead { display: none; }
+  #dsTable, #dsTable > tbody { display: block; width: 100%; }
+  #dsTable > tbody > tr.tr-main { display: grid; grid-template-columns: 1fr 1fr auto; gap: .4rem .5rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid var(--line-soft); }
+  #dsTable > tbody > tr.tr-main > td { display: block; border: 0; padding: 0; min-width: 0; }
+  #dsTable > tbody > tr.tr-main > td:first-child { grid-column: 1 / -1; }
+  #dsTable > tbody > tr.tr-main > td.tr-avail { grid-column: 1 / -1; text-align: left; font-size: .84rem; color: var(--ink-soft); }
+  #dsTable > tbody > tr.tr-main > td.tr-avail:not(:empty)::before { content: 'On hand: '; color: var(--muted); }
+  #dsTable > tbody > tr.tr-main > td.tr-lotsum { grid-column: 1 / -1; order: 5; min-width: 0; }
+  #dsTable > tbody > tr.tr-main > td.tr-lotsum:empty { display: none; }
+  #dsTable > tbody > tr.tr-main > td.ds-conv-cell { grid-column: 1 / -1; }
+  #dsTable > tbody > tr.tr-main > td { background: none; box-shadow: none; }
+  #dsTable > tbody > tr.tr-main > td.ds-qty-cell { grid-column: 1 / 3; min-width: 0; }
+  #dsTable > tbody > tr.tr-main > td.tr-crates-cell { grid-column: 3; width: auto; }
+  #dsTable > tbody > tr.tr-main > td.tr-crates-cell .crate-btn { width: 100%; min-width: 7.5rem; justify-content: center; white-space: nowrap; }
+  #dsTable > tbody > tr.tr-main > td.grid-acts { grid-column: 3; grid-row: 1; }
+  #dsTable > tbody > tr.tr-main > td:first-child { grid-column: 1 / 3; }
+  #dsTable .qty-unit-group { min-width: 0; }
+  #dsTable > tbody > tr.tr-lots { display: block; padding: 0 0 .6rem; }
+  #dsTable > tbody > tr.tr-lots[hidden] { display: none; }
+  .ds-total { justify-content: space-between; }
+  /* Transfer Inventory: the quantity box keeps its unit */
+  #trTable .qty-unit-group { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) { tr.row-copied > td { animation: none; } .pack-group { transition: none; } }
+
+/* Convert Kilos to Crates */
+.pack-items-table tr.is-none td { color: var(--steel-2); }
+.pack-items-table .crate-btn span { margin-left: .3rem; }
+.pack-ready { border-color: var(--crate-deep); box-shadow: 0 0 0 3px var(--crate-tint), var(--lift-1); }
+.pack-ready > .card-header { background: var(--crate-tint); }
+.pack-summary { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; }
+.pack-summary-text { display: flex; flex-direction: column; line-height: 1.3; }
+@media (max-width: 575.98px) {
+  .pack-items-table thead { display: none; }
+  .pack-items-table, .pack-items-table tbody { display: block; }
+  .pack-items-table tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .25rem .5rem; padding: .6rem .5rem; border-bottom: 1px solid var(--line-soft); }
+  .pack-items-table tbody td { display: block; border: 0; padding: 0; text-align: left !important; }
+  .pack-items-table tbody td:first-child { grid-column: 1 / -1; }
+  .pack-items-table tbody td:last-child { grid-column: 1 / -1; }
+  .pack-items-table tbody td:last-child .crate-btn { width: 100%; justify-content: center; }
+  .pack-items-table tbody td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-size: .7rem; font-weight: 500; color: var(--steel); }
+}
+
+/* v4: full-screen windows on a phone fill the screen (the .6rem margin of the small windows is not for them) */
+@media (max-width: 767.98px) { .modal-dialog.modal-fullscreen-md-down { margin: 0; } }
+@media (max-width: 575.98px) { .modal-dialog.modal-fullscreen-sm-down { margin: 0; } }
+.modal-dialog.modal-fullscreen { margin: 0; }
+
+/* v4: the crates on hand in the crate window on a phone: one card per crate, no sideways scrolling.
+   Row 1: tick, crate number, weight left. Row 2: heads and dates. Row 3: the dispatch figure and the weight taken. */
+@media (max-width: 575.98px) {
+  .crate-pick > thead { display: none; }
+  .crate-pick, .crate-pick > tbody, .crate-pick > tfoot { display: block; width: 100%; }
+  .crate-pick > tbody > tr { display: grid; grid-template-columns: 1.7rem minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "tick no no left" ". hd prod exp" ". dfig dfig take";
+    gap: .3rem .5rem; align-items: center; padding: .6rem .5rem; border-bottom: 1px solid var(--line-soft); }
+  .crate-pick:not(.has-dfig) > tbody > tr { grid-template-areas: "tick no no left" ". hd prod exp" ". . take take"; }
+  .crate-pick > tbody > tr > td { display: block; border: 0; padding: 0; background: none; box-shadow: none; text-align: left; min-width: 0; }
+  .crate-pick > tbody > tr.is-picked { background: var(--crate-tint); }
+  .crate-pick > tbody > tr > td:first-child { grid-area: tick; }
+  .crate-pick > tbody > tr > td.crate-no { grid-area: no; font-size: 1.05rem; font-weight: 700; }
+  .crate-pick > tbody > tr > td.crate-left { grid-area: left; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .crate-pick > tbody > tr > td.crate-left::after { content: ' ' attr(data-label); font-size: .75em; font-weight: 500; color: var(--steel); }
+  .crate-pick > tbody > tr > td.crate-heads { grid-area: hd; }
+  .crate-pick > tbody > tr > td.crate-prod { grid-area: prod; }
+  .crate-pick > tbody > tr > td.crate-exp { grid-area: exp; }
+  .crate-pick > tbody > tr > td.crate-heads, .crate-pick > tbody > tr > td.crate-prod, .crate-pick > tbody > tr > td.crate-exp { font-size: .78rem; color: var(--ink-soft); line-height: 1.25; }
+  .crate-pick > tbody > tr > td.crate-heads:empty, .crate-pick > tbody > tr > td.crate-prod:empty { visibility: hidden; }
+  .crate-pick > tbody > tr > td.crate-heads::before, .crate-pick > tbody > tr > td.crate-prod::before, .crate-pick > tbody > tr > td.crate-exp::before,
+  .crate-pick > tbody > tr > td.crate-dfig::before, .crate-pick > tbody > tr > td.crate-tk::before { content: attr(data-label); display: block; font-size: .68rem; color: var(--muted); }
+  .crate-pick > tbody > tr > td.crate-exp small { display: inline; margin-left: .25rem; }
+  .crate-pick > tbody > tr > td.crate-dfig { grid-area: dfig; }
+  .crate-pick > tbody > tr > td.crate-tk { grid-area: take; }
+  .crate-pick > tbody > tr > td.crate-dfig .form-control, .crate-pick > tbody > tr > td.crate-tk .form-control { width: 100%; max-width: none; }
+  .crate-pick > tfoot > tr { display: flex; justify-content: space-between; gap: .75rem; padding: .6rem .5rem; }
+  .crate-pick > tfoot > tr > th { border: 0; padding: 0; background: none; }
+  .crate-pick > tfoot > tr > th:empty { display: none; }
+  .crate-pick > tfoot > tr > th.crate-left::before, .crate-pick > tfoot > tr > th.crate-tk::before { content: attr(data-label) ' '; font-weight: 500; color: var(--muted); }
+  .crate-pick > tfoot > tr > th:nth-child(2) { margin-right: auto; }
+}

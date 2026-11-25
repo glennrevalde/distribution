@@ -3,7 +3,8 @@ declare(strict_types=1);
 
 /**
  * Distribution: the open crates of an item at a site, for the crate window of the transaction forms and the POS.
- * GET item_id=N & site_id=N [& txn=id of the document being edited, whose own crates count back in].
+ * GET item_id=N & site_id=N [& txn=id of the document being edited, whose own crates count back in]
+ * [& pack=1: v4, also the groups of loose stock that can be put into crates, with the container's name].
  * Any logged-in user who may see the site: it shows crate numbers, heads, kilos and dates, as the forms do.
  */
 header('Cache-Control: no-store');
@@ -27,7 +28,16 @@ if ($siteId && $unit) {
     $loose = (int)g('txn') ? Crates::looseFor($itemId, $siteId, (int)g('txn')) : Crates::loose($itemId, $siteId);
     $loose = g('signed') === '1' ? $loose : max(0.0, $loose);
 }
-json_out([
+$out = [
     'crates' => $list, 'base' => $base, 'unit' => $unit['code'] ?? '', 'loose' => round($loose, 4), 'next' => Crates::peekNo(),
     'site' => $siteId ? (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => $siteId]) : '',
-]);
+];
+// v4: pack=1: the groups of loose stock that can go into crates (Dispatch Inventory, Convert Kilos to Crates)
+if (g('pack') === '1' && $siteId && $unit) {
+    $out['groups'] = Crates::looseGroups($itemId, $siteId, (int)g('txn') ?: null);
+    $out['container'] = Crates::containerName($itemId);
+    $out['container1'] = Crates::containerName($itemId, false);
+    $out['label'] = Crates::convertLabel($itemId);
+    $out['lots'] = Lots::on() && Lots::itemTracked($itemId);
+}
+json_out($out);

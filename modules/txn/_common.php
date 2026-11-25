@@ -430,12 +430,12 @@ function txn_common_actions(string $pageKey, array $types): bool
         case 'receipt':
             // v3 distribution: the Inventory Transfer as a POS printer slip (browser, Bluetooth printer), or as a PDF of it
             Access::require($pageKey, 'print');
-            if ($t['txn_type'] !== 'inventory_transfer') {
+            if (!in_array($t['txn_type'], ['inventory_transfer', 'inventory_dispatch'], true)) {
                 redirect(Txn::url($t));
             }
             Audit::log('print', Txn::module($t['txn_type']), 'transaction', $id, Txn::ref($t), ['page_key' => $pageKey, 'reason' => g('pdf') === '1' ? 'POS receipt saved as PDF' : 'POS receipt']);
             if (g('pdf') === '1') {
-                TransferReceipt::pdf(TransferReceipt::model($t))->download('Inventory_Transfer_' . ($t['txn_no'] ?: $id) . '.pdf');
+                TransferReceipt::pdf(TransferReceipt::model($t))->download(($t['txn_type'] === 'inventory_dispatch' ? 'Inventory_Dispatch_' : 'Inventory_Transfer_') . ($t['txn_no'] ?: $id) . '.pdf');
             }
             TransferReceipt::render($t, $pageKey);
             return true;
@@ -534,7 +534,8 @@ function crate_notes(int $txnId): array
             if (in_array($r['kind'], ['sale', 'shrink', 'shortage'], true) && !(int)$r['whole']) {
                 $parts[] = $r['crate_no'] . ' (' . qty($r['qty']) . ' of ' . qty($r['qty_in']) . ' ' . $base . $exp . ')';
             } elseif ($r['kind'] === 'transfer') {
-                $parts[] = $r['crate_no'] . ' (' . qty(max(0.0, (float)$r['w_before'])) . ' ' . $base . ')';
+                // v4: a crate the dispatch itself packed from loose stock says so
+                $parts[] = $r['crate_no'] . ' (' . qty(max(0.0, (float)$r['w_before'])) . ' ' . $base . ((int)($r['receive_txn_id'] ?? 0) === $txnId ? ', packed' : '') . ')';
             } elseif ($r['kind'] === 'adjust') {
                 // v3: a crate adjusted down (kilos taken out) or up (put back)
                 $parts[] = $r['crate_no'] . ' (' . ((float)$r['qty'] > 0 ? '-' : '+') . qty(abs((float)$r['qty'])) . ' ' . $base . $exp . ')';
@@ -702,6 +703,11 @@ function render_txn_view(array $t, string $pageKey): void
     // builds are edited on their own pages)
     $editable = !$voided && !$sigLocked && Access::can($pageKey, 'edit') && !in_array($type, ['pos_sale', 'pos_return', 'depreciation', 'asset_disposal', 'bank_charge', 'bank_interest', 'pos_over_short', 'refund',
         'finance_charge', 'shortage_charge'], true) && !TransferClosing::ownerOf($id);
+    // a transfer or dispatch that moved crates (or filled them from loose stock) is corrected by voiding it: no Edit button
+    if ($editable && in_array($type, ['inventory_transfer', 'inventory_dispatch'], true) && Crates::ready()
+        && DB::value("SELECT 1 FROM crate_movements WHERE txn_id = :t AND kind IN ('transfer', 'pack') LIMIT 1", ['t' => $id])) {
+        $editable = false;
+    }
     if ($editable) {
         $actions[] = btn_link(url($pageKey, ['a' => 'edit', 'id' => $id]), 'Edit', 'btn-primary', 'pencil');
         if ((int)$t['is_pending'] === 1 && in_array($type, ['invoice', 'sales_receipt'], true)) {
@@ -710,7 +716,7 @@ function render_txn_view(array $t, string $pageKey): void
     }
     if (Access::can($pageKey, 'print')) {
         $actions[] = btn_link(Txn::url($t, 'print') . (g('lines') === 'details' ? '&lines=details' : ''), 'Print', 'btn-outline-secondary', 'printer');
-        if ($type === 'inventory_transfer') {
+        if ($type === 'inventory_transfer' || $type === 'inventory_dispatch') {
             // v3 distribution: the transfer on the POS printer, crate by crate (and as a PDF from there)
             $actions[] = btn_link(Txn::url($t, 'receipt'), 'Print POS Receipt', 'btn-outline-primary', 'receipt');
         }
@@ -843,7 +849,7 @@ function render_txn_view(array $t, string $pageKey): void
     if ($t['payment_method_id']) {
         $info['Payment method'] = h(DB::value('SELECT name FROM payment_methods WHERE id = :id', ['id' => $t['payment_method_id']]));
     }
-    if ($type === 'inventory_transfer') {
+    if ($type === 'inventory_transfer' || $type === 'inventory_dispatch') {
         $info['From site'] = h($site);
         $info['To site'] = h($t['site2_id'] ? (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $t['site2_id']]) : '');
     } elseif ($site) {
@@ -870,13 +876,15 @@ function render_txn_view(array $t, string $pageKey): void
           <?php endforeach; ?>
           </div>
         </div></div>
-        <?php if ($lines): $lotNotes = lot_notes($id); $crateNotes = crate_notes($id); ?>
+        <?php if ($lines): $lotNotes = lot_notes($id); $crateNotes = crate_notes($id); $stockMove = in_array($type, ['inventory_transfer', 'inventory_dispatch'], true); ?>
         <?= $groupSwitch !== '' ? '<div class="mb-2">' . $groupSwitch . '</div>' : '' ?>
         <div class="card mb-3"><div class="table-responsive"><table class="table table-sm mb-0">
           <thead><tr>
             <?php $lineClasses = (bool)array_filter($lines, fn($x) => !empty($x['class_id'])); ?>
             <?php if (is_journal_style($type) || $type === 'deposit'): ?>
               <th>Account</th><th>Description</th><th>Name</th><?php if ($lineClasses): ?><th>Class</th><?php endif; ?><th class="num">Debit</th><th class="num">Credit</th>
+            <?php elseif ($stockMove): ?>
+              <th>Item</th><th>Description</th><th class="num">Qty</th>
             <?php else: ?>
               <th>Item / Account</th><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Disc</th><th class="num">Amount</th><th>Tax</th>
               <?php if (in_array($type, ['sales_order', 'purchase_order'], true)): ?><th class="num"><?= $type === 'sales_order' ? 'Invoiced' : 'Received' ?></th><?php endif; ?>
@@ -900,10 +908,12 @@ function render_txn_view(array $t, string $pageKey): void
                 <td><?= h($l['description']) ?><?= !empty($l['_group']) ? '<div class="small text-muted group-members">Item group: ' . h(implode(', ', array_map(fn($m) => qty($m['qty']) . ' ' . ($m['item_code'] ?: $m['description']), $l['_members']))) . '</div>'
                     : (!empty($l['group_ref']) && !empty($l['group_item_id']) ? '<div class="small text-muted">In item group ' . h((string)(item_cache((int)$l['group_item_id'])['code'] ?? '')) . '</div>' : '') ?><?= (int)$l['is_billable'] ? ' <span class="badge text-bg-info">billable</span>' : '' ?><?= $l['billed_txn_id'] ? ' <span class="small">billed on ' . Txn::link((int)$l['billed_txn_id']) . '</span>' : '' ?><?= !empty($l['id']) && isset($lotNotes[(int)$l['id']]) ? '<div class="small lot-note"><i class="bi bi-calendar2-week"></i> ' . h($lotNotes[(int)$l['id']]) . '</div>' : '' ?><?= !empty($l['id']) && isset($crateNotes[(int)$l['id']]) ? '<div class="small crate-note"><i class="bi bi-boxes"></i> ' . h($crateNotes[(int)$l['id']]) . '</div>' : '' ?></td>
                 <td class="num"><?= $l['item_type'] === 'subtotal' ? '' : line_qty($l) ?></td>
+                <?php if (!$stockMove): ?>
                 <td class="num"><?= $l['item_type'] === 'subtotal' ? '' : line_rate($l) ?></td>
                 <td class="num"><?= line_discount($l) ?></td>
                 <td class="num"><?= money($l['amount']) ?></td>
                 <td class="small"><?= $l['tax_code_id'] ? h(Lookup::taxCodes()[$l['tax_code_id']] ?? '') . ' ' . money($l['tax_amount'], true) : '' ?></td>
+                <?php endif; ?>
                 <?php if (in_array($type, ['sales_order', 'purchase_order'], true)): ?><td class="num"><?= qty($l['qty_fulfilled']) ?><?= (int)$l['is_closed'] ? ' <span class="badge text-bg-secondary">closed</span>' : '' ?></td><?php endif; ?>
                 <?php if ($showCosts && $isSales && $posting): ?><td class="num"><?= money($l['cost_amount'], true) ?></td><?php endif; ?>
                 <?php if (in_array($type, PURCHASE_TYPES, true)): ?><td><?= h($l['customer_name'] ?: ($l['line_kind'] === 'expense' ? ($l['vendor_name'] ?? '') : '')) ?></td><?php endif; ?>
@@ -943,7 +953,7 @@ function render_txn_view(array $t, string $pageKey): void
             <?php if ((float)$t['discount_amount'] != 0.0): ?><tr><td>Discount</td><td class="num"><?= money($t['discount_amount']) ?></td></tr><?php endif; ?>
             <?php if ((float)$t['withholding_amount'] != 0.0): ?><tr><td>Withholding tax</td><td class="num"><?= money($t['withholding_amount']) ?></td></tr><?php endif; ?>
             <?php if ((float)$t['cash_back_amount'] != 0.0): ?><tr><td>Cash back</td><td class="num"><?= money($t['cash_back_amount']) ?></td></tr><?php endif; ?>
-            <?php if (in_array($type, ['inventory_transfer', 'build_assembly'], true)): ?>
+            <?php if (in_array($type, ['inventory_transfer', 'inventory_dispatch', 'build_assembly'], true)): ?>
             <tr class="fw-bold"><td>Total quantity</td><td class="num"><?= qty(array_sum(array_map(fn($x) => $x['line_kind'] === 'component' ? 0.0 : (float)$x['qty'], $lines))) ?></td></tr>
             <?php else: ?>
             <tr class="fw-bold"><td>Total</td><td class="num"><?= money($t['total']) ?></td></tr>
@@ -1334,7 +1344,7 @@ function txn_print_body(array $t): void
       </div>
       <hr>
       <div class="row mb-3">
-        <?php if ($type === 'inventory_transfer'): $toSite = $t['site2_id'] ? (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $t['site2_id']]) : ''; ?>
+        <?php if ($type === 'inventory_transfer' || $type === 'inventory_dispatch'): $toSite = $t['site2_id'] ? (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $t['site2_id']]) : ''; ?>
         <div class="col-6">
           <div class="small text-muted">From site</div><strong><?= h(print_site_name($t)) ?></strong>
           <div class="small text-muted mt-2">To site</div><strong><?= h($toSite) ?></strong>
@@ -1364,7 +1374,7 @@ function txn_print_body(array $t): void
           <div class="small">Memo: <?= h($t['memo']) ?></div>
         </div>
       <?php endif; ?>
-      <?php $qtyOnly = in_array($type, ['inventory_transfer', 'build_assembly'], true); ?>
+      <?php $qtyOnly = in_array($type, ['inventory_transfer', 'inventory_dispatch', 'build_assembly'], true); ?>
       <?php if ($lines && !in_array($type, ['bill_payment'], true)): ?>
       <table class="table table-sm">
         <thead><tr><th>Item</th><th>Description</th><th class="num">Qty</th><?php if (!$qtyOnly): ?><th class="num">Rate</th><th class="num">Amount</th><?php endif; ?></tr></thead>

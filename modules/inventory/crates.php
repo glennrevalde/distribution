@@ -37,14 +37,15 @@ if (g('a') === 'view') {
         <div class="crate-tag-item"><strong><?= h($c['code']) ?></strong> <?= h($c['item_name']) ?></div>
         <div class="crate-fill" title="<?= $usedPct ?>% taken out"><span style="height:<?= 100 - $usedPct ?>%"></span></div>
       </div>
+      <?php $packed = (bool)DB::value("SELECT 1 FROM crate_movements WHERE crate_id = :c AND kind = 'pack' LIMIT 1", ['c' => $c['id']]);   // v4: filled from loose stock ?>
       <dl class="crate-facts">
         <div><dt>Status</dt><dd><span class="state-text state-<?= h($c['status']) ?>"><?= h(Crates::statusText($c['status'])) ?></span></dd></div>
         <div><dt>Left in the crate</dt><dd class="fig"><?= Crates::fig($c['qty_left'], $base) ?> <?= h($base) ?></dd></div>
-        <div><dt>Received with</dt><dd class="fig"><?= Crates::fig($c['qty_in'], $base) ?> <?= h($base) ?><?= (float)$c['pcs'] > 0 ? ', ' . qty($c['pcs']) . ' heads' : '' ?></dd></div>
+        <div><dt><?= $packed ? 'Filled with' : 'Received with' ?></dt><dd class="fig"><?= Crates::fig($c['qty_in'], $base) ?> <?= h($base) ?><?= (float)$c['pcs'] > 0 ? ', ' . qty($c['pcs']) . ' heads' : '' ?></dd></div>
         <div><dt>Site</dt><dd><?= h($c['site_name']) ?></dd></div>
         <div><dt>Production date</dt><dd><?= h(fdate($c['production_date'])) ?: '<span class="text-muted">none</span>' ?></dd></div>
         <div><dt>Expiry date</dt><dd><?= $c['expiry_date'] ? h(fdate($c['expiry_date'])) . ' <span class="small ' . ($days < 0 ? 'text-danger' : ($days <= 3 ? 'text-warning-emphasis' : 'text-muted')) . '">' . ($days < 0 ? 'expired ' . abs($days) . ' day' . (abs($days) === 1 ? '' : 's') . ' ago' : ($days === 0 ? 'expires today' : $days . ' day' . ($days === 1 ? '' : 's') . ' left')) . '</span>' : '<span class="text-muted">none</span>' ?></dd></div>
-        <div><dt>Received</dt><dd><?= h(fdate($c['received_date'])) ?><?= $c['receive_txn_id'] ? ' on ' . Txn::link((int)$c['receive_txn_id']) : '' ?></dd></div>
+        <div><dt><?= $packed ? 'Filled from loose stock' : 'Received' ?></dt><dd><?= h(fdate($c['received_date'])) ?><?= $c['receive_txn_id'] ? ' on ' . Txn::link((int)$c['receive_txn_id']) : ($packed ? ' on Convert Kilos to Crates' : '') ?></dd></div>
         <div><dt>Supplier</dt><dd><?= h((string)$c['vendor_name']) ?: '<span class="text-muted">none</span>' ?></dd></div>
         <?php if (Access::viewCosts()): ?><div><dt>Cost per <?= h($base) ?></dt><dd class="fig"><?= money($c['unit_cost']) ?></dd></div><?php endif; ?>
         <?php if ($c['status'] === 'converted'): ?><div><dt>Converted</dt><dd><?= h(fdatetime($c['converted_at'])) ?> by <?= h((string)$c['converted_name']) ?><?= $c['convert_note'] ? '<div class="small text-muted">' . h($c['convert_note']) . '</div>' : '' ?></dd></div><?php endif; ?>
@@ -54,7 +55,7 @@ if (g('a') === 'view') {
       <thead><tr><th>Date</th><th>What happened</th><th>Document</th><th>Customer / site</th><th class="num"><?= h($base) ?></th><th class="num">Left after</th><th>By</th></tr></thead>
       <tbody>
       <?php $left = 0.0; foreach ($moves as $m):
-          if ($m['kind'] === 'receive') { $left += (float)$m['qty']; } elseif (in_array($m['kind'], Crates::TAKE_KINDS, true)) { $left -= (float)$m['qty']; } ?>
+          if ($m['kind'] === 'receive' || $m['kind'] === 'pack') { $left += (float)$m['qty']; } elseif (in_array($m['kind'], Crates::TAKE_KINDS, true)) { $left -= (float)$m['qty']; } ?>
         <tr class="move-<?= h($m['kind']) ?>">
           <td><?= h(fdate($m['move_date'])) ?></td>
           <td><?= h(Crates::kindText($m['kind'])) ?><?= in_array($m['kind'], ['sale', 'shrink', 'shortage'], true) || ($m['kind'] === 'adjust' && (float)$m['qty'] > 0) ? ((int)$m['whole'] ? ', the whole crate' : ($m['kind'] === 'adjust' ? ', down' : ', part of it')) : ($m['kind'] === 'adjust' ? ', up' : '') ?><?= $m['note'] ? '<div class="small text-muted">' . h($m['note']) . '</div>' : '' ?></td>

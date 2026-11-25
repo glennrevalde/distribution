@@ -164,6 +164,8 @@ return [
         'inv.uom'              => ['inv', 'U/M Set List', 'list', 'Lists', 'inventory/uom.php', [], 1],
         'inv.formulas'         => ['inv', 'Processing Formulas (Multi-Output BOM)', 'list', 'Lists', 'inventory/formulas.php', [], 1],
         'inv.transfers'        => ['inv', 'Transfer Inventory', 'transaction', 'Transactions', 'inventory/transfers.php', [], 1],
+        // v4 distribution: stock sent to a van or outlet, loose kilos put into crates on the way (Kilos to Crates)
+        'inv.dispatch'         => ['inv', 'Dispatch Inventory', 'transaction', 'Transactions', 'inventory/dispatch.php', [], 1],
         // v2 distribution: a van or outlet sends back what is left; shrinkage is adjusted, shortage charged to the employee
         'inv.transfer_closing' => ['inv', 'Inventory Transfer Closing', 'transaction', 'Transactions', 'inventory/transfer_closing.php', [], 1],
         'inv.shortages'        => ['inv', 'Shortage Charges', 'transaction', 'Transactions', 'inventory/shortages.php', [], 1],
@@ -176,6 +178,7 @@ return [
         // ---------------- Distribution: stock received, followed and sold by the crate
         'inv.crates'           => ['inv', 'Crate Center', 'center', 'Crates', 'inventory/crates.php', [], 1],
         'inv.crate_convert'    => ['inv', 'Convert Crates to Kilos', 'transaction', 'Crates', 'inventory/crate_convert.php', [], 1],
+        'inv.crate_pack'       => ['inv', 'Convert Kilos to Crates', 'transaction', 'Crates', 'inventory/crate_pack.php', [], 1],
         'inv.crate_move'       => ['inv', 'Move Crates to Another Site', 'transaction', 'Crates', 'inventory/crate_move.php', [], 1],
         'rpt.crates_on_hand'   => ['inv', 'Crates Remaining by Item', 'report', 'Crate Reports', 'reports/run.php', ['report' => 'crates_on_hand'], 1],
         'rpt.crate_detail'     => ['inv', 'Kilos per Crate by Item', 'report', 'Crate Reports', 'reports/run.php', ['report' => 'crate_detail'], 1],
