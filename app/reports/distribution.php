@@ -198,7 +198,7 @@ Report::define('crate_movements', [
     'filters' => ['range', 'site', 'item'],
     'default_dates' => 'this_month',
     'extra_filters' => [
-        'kind' => ['What happened', fn() => ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos', 'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted', 'pack' => 'Filled from loose stock'], 'Everything'],
+        'kind' => ['What happened', fn() => ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos', 'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted', 'pack' => 'Filled from loose stock', 'dates' => 'Dates given'], 'Everything'],
     ],
     'run' => function (array $f): array {
         [$sf, $sp] = dist_site_sql('c.site_id');

@@ -12,6 +12,12 @@ declare(strict_types=1);
  *  - Put in agreement with the crates: each date group gets what its crates hold, from the loose stock of the others
  *    (the group without dates first).
  * Both are voided like any adjustment, which takes the change back.
+ *
+ * v6: "Put in agreement with the crates" never takes dates off stock that has them: crates without dates that hold
+ * more than the stock without dates get the dates of the stock instead (v5 moved the kilos into "no dates", so a
+ * purchase received with its dates showed partly without them on Dispatch Inventory). "Take the dates from the
+ * documents" puts back what v5 did (LotCheck::repair()): it voids those date changes, gives stock received without
+ * dates on a line that carries them the dates of the line, and puts each group in agreement with its crates.
  */
 $pageKey = 'inv.lot_check';
 $sites = Lookup::sites();
@@ -57,6 +63,7 @@ handle_post(function () use ($pageKey) {
         flash('success', qty($q) . ' of ' . $code . ' now carries ' . Lots::label($prod, $exp) . ', on ' . Txn::ref(Txn::load($id)) . '. Void that adjustment to take it back.');
         redirect($back);
     }
+    $refs = fn(array $ids): string => implode(', ', array_map(fn($id) => Txn::ref(Txn::load((int)$id)), $ids));
     if ($a === 'align') {
         $itemId = pint('item_id') ?: null;
         $siteId = pint('site_id') ?: null;
@@ -64,9 +71,43 @@ handle_post(function () use ($pageKey) {
         if (!$rows) {
             fail('The stock already agrees with its crates.');
         }
-        $ids = LotCheck::align($rows, $date);
-        $refs = implode(', ', array_map(fn($id) => Txn::ref(Txn::load($id)), $ids));
-        flash('success', count($rows) . ' item' . (count($rows) === 1 ? '' : 's') . ' put in agreement with their crates, on ' . $refs . '.');
+        $r = LotCheck::align($rows, $date);
+        if (!$r['docs'] && !$r['crates']) {
+            fail('Nothing can be moved: the stock that would make up the difference is all in crates already.');
+        }
+        $said = [];
+        if ($r['docs']) {
+            $said[] = 'the quantities moved on ' . $refs($r['docs']);
+        }
+        if ($r['crates']) {
+            $said[] = $r['crates'] . ' crate' . ($r['crates'] === 1 ? '' : 's') . ' without dates given the dates of the stock ' . ($r['crates'] === 1 ? 'it holds' : 'they hold');
+        }
+        flash($r['left'] > Crates::EPS ? 'warning' : 'success', count($rows) . ' item' . (count($rows) === 1 ? '' : 's') . ' put in agreement with their crates: ' . implode('; ', $said) . '.'
+            . ($r['left'] > Crates::EPS ? ' ' . qty($r['left']) . ' could not be put right: the stock that would make up the difference is all in crates.' : ''));
+        redirect($back);
+    }
+    if ($a === 'repair') {
+        $itemId = pint('item_id') ?: null;
+        $siteId = pint('site_id') ?: null;
+        $r = LotCheck::repair($siteId, $itemId, $date);
+        if (!$r['voided'] && $r['qty'] <= Crates::EPS && !$r['docs'] && !$r['crates']) {
+            fail('There is nothing to put back: no stock without dates came in with dates on its documents.');
+        }
+        $said = [];
+        if ($r['qty'] > Crates::EPS) {
+            $figs = implode(' and ', array_map(fn($u, $q) => qty($q) . ' ' . $u, array_keys($r['units']), $r['units']));
+            $said[] = $figs . ($r['items'] > 1 ? ' of ' . $r['items'] . ' items' : '') . ' got back the production and expiry dates of ' . ($r['items'] > 1 ? 'their' : 'its') . ' documents';
+        }
+        if ($r['voided']) {
+            $said[] = 'voided ' . $refs($r['voided']) . ' of the previous version (' . (count($r['voided']) === 1 ? 'it' : 'they') . ' took the dates off)';
+        }
+        if ($r['docs']) {
+            $said[] = 'the date groups put in agreement on ' . $refs($r['docs']);
+        }
+        if ($r['crates']) {
+            $said[] = $r['crates'] . ' crate' . ($r['crates'] === 1 ? '' : 's') . ' without dates given the dates of ' . ($r['crates'] === 1 ? 'its' : 'their') . ' stock';
+        }
+        flash('success', ucfirst(implode('; ', $said)) . '.');
         redirect($back);
     }
     fail('Choose what to do.');
@@ -77,6 +118,7 @@ $rows = $on ? LotCheck::overview($siteId, null, $showAll, $search) : [];
 $toCheck = array_values(array_filter($rows, fn($r) => !$r['ok']));
 $undatedItems = count(array_filter($rows, fn($r) => $r['undated'] > Crates::EPS));
 $offItems = count(array_filter($rows, fn($r) => $r['deficit'] > Crates::EPS));
+$fixRows = array_values(array_filter($rows, fn($r) => $r['fixable'] > Crates::EPS));   // v6: stock that came in with dates
 $canFix = Access::can($pageKey, 'create');
 $backFields = '<input type="hidden" name="back_site" value="' . (int)$siteId . '"><input type="hidden" name="back_q" value="' . h($search) . '"><input type="hidden" name="back_show" value="' . ($showAll ? 'all' : '') . '">';
 $fig = fn($q, string $u): string => '<span class="qty-fig">' . Crates::fig((float)$q, $u ?: 'kg') . '</span> <span class="qty-unit">' . h($u) . '</span>';
@@ -86,7 +128,7 @@ layout_start('Production and Expiry Dates', ['actions' => page_link('inv.adjust'
 ?>
 <p class="text-muted small page-lead">Every item that keeps production and expiry dates, site by site: how much of its stock has dates, how much has none and which documents
   brought that in, and whether each date group holds what its crates hold. A change of dates made here is an inventory adjustment that moves the quantity from one
-  date group to another at the same value, so nothing is posted to the books; void it to take it back.</p>
+  date group to another at the same value, so nothing is posted to the books. Dates are never taken off stock that has them.</p>
 
 <?php if (!$on): ?>
 <div class="card lc-off"><div class="card-body">
@@ -104,6 +146,28 @@ layout_start('Production and Expiry Dates', ['actions' => page_link('inv.adjust'
     <div class="col-4 col-md-auto"><button class="btn btn-sm btn-outline-secondary w-100"><i class="bi bi-search"></i> Show</button></div>
   </div>
 </form>
+
+<?php if ($fixRows): $fixShown = array_slice($fixRows, 0, 4); ?>
+<div class="card lc-repair mb-3"><div class="card-body">
+  <div class="lc-repair-text">
+    <h2><?= count($fixRows) === 1 ? h($fixRows[0]['code']) . ' has stock that came in with production and expiry dates but shows without them'
+        : count($fixRows) . ' items have stock that came in with production and expiry dates but shows without them' ?></h2>
+    <ul class="lc-repair-list">
+      <?php foreach ($fixShown as $fr): ?><li><strong><?= h($fr['code']) ?></strong> at <?= h($fr['site']) ?>: <?= $fig($fr['fixable'], $fr['unit'] ?: 'kg') ?></li><?php endforeach; ?>
+      <?php if (count($fixRows) > count($fixShown)): ?><li class="text-muted">and <?= count($fixRows) - count($fixShown) ?> more below</li><?php endif; ?>
+    </ul>
+    <p>The previous version's <em>Put in agreement with the crates</em> moved kilos with dates into the group without dates whenever crates without dates held more
+      than that group; some stock may also have been recorded without the dates its document carries. Taking the dates from the documents voids those date changes,
+      gives the stock each line brought in the dates of the line, then gives the crates without dates the dates of the stock they hold. The quantity and value on hand
+      do not change.</p>
+  </div>
+  <?php if ($canFix): ?>
+  <form method="post" class="lc-repair-go"><?= csrf_field() ?><?= $backFields ?><input type="hidden" name="do" value="repair"><input type="hidden" name="site_id" value="<?= (int)$siteId ?>">
+    <button class="btn btn-primary" data-confirm="Take the production and expiry dates from the documents for <?= count($fixRows) === 1 ? h($fixRows[0]['code']) : 'every item listed' ?>? The date changes of the previous version that took the dates off are voided. The quantity and value on hand do not change."><i class="bi bi-calendar-check"></i> Take the dates from the documents</button>
+  </form>
+  <?php endif; ?>
+</div></div>
+<?php endif; ?>
 
 <div class="lc-summary card mb-3"><div class="card-body d-flex flex-wrap align-items-center gap-3">
   <div class="lc-summary-text">
@@ -123,14 +187,16 @@ layout_start('Production and Expiry Dates', ['actions' => page_link('inv.adjust'
 </div></div>
 
 <div class="lc-list">
-<?php foreach ($rows as $i => $r): $u = $r['unit'] ?: 'kg'; $state = $r['deficit'] > Crates::EPS ? 'is-off' : ($r['undated'] > Crates::EPS ? 'is-undated' : 'is-ok'); ?>
+<?php foreach ($rows as $i => $r): $u = $r['unit'] ?: 'kg'; $fix = $r['fixable'] > Crates::EPS;
+    $state = $fix ? 'is-fix' : ($r['deficit'] > Crates::EPS ? 'is-off' : ($r['undated'] > Crates::EPS ? 'is-undated' : 'is-ok')); ?>
   <article class="card lc-item <?= $state ?>">
     <div class="card-body">
       <div class="lc-head">
         <div class="lc-title"><strong><?= h($r['code']) ?></strong> <span class="lc-name"><?= h($r['name']) ?></span>
           <span class="lc-site"><i class="bi bi-geo-alt"></i> <?= h($r['site']) ?></span></div>
         <div class="lc-state">
-          <?php if ($r['deficit'] > Crates::EPS): ?><span class="lc-flag lc-flag-off"><i class="bi bi-exclamation-triangle"></i> <?= $fig($r['deficit'], $u) ?> in crates whose dates the stock does not carry</span>
+          <?php if ($fix): ?><span class="lc-flag lc-flag-fix"><i class="bi bi-calendar-x"></i> <?= $fig($r['fixable'], $u) ?> came in with dates but shows without them</span>
+          <?php elseif ($r['deficit'] > Crates::EPS): ?><span class="lc-flag lc-flag-off"><i class="bi bi-exclamation-triangle"></i> <?= $fig($r['deficit'], $u) ?> in crates whose dates the stock does not carry</span>
           <?php elseif ($r['undated'] > Crates::EPS): ?><span class="lc-flag lc-flag-undated"><i class="bi bi-calendar-x"></i> <?= $fig($r['undated'], $u) ?> without dates</span>
           <?php else: ?><span class="lc-flag lc-flag-ok"><i class="bi bi-check2-circle"></i> In order</span><?php endif; ?>
         </div>
@@ -140,14 +206,18 @@ layout_start('Production and Expiry Dates', ['actions' => page_link('inv.adjust'
         <div><dt>With dates</dt><dd><?= $fig($r['dated'], $u) ?></dd></div>
         <div class="<?= $r['undated'] > Crates::EPS ? 'lc-attn' : '' ?>"><dt>Without dates</dt><dd><?= $fig($r['undated'], $u) ?></dd></div>
         <?php if ($r['crate_item']): ?><div><dt>In crates</dt><dd><?= $fig($r['in_crates'], $u) ?></dd></div><?php endif; ?>
+        <?php if ($fix): ?><div class="lc-due"><dt>Dates on its documents</dt><dd><?= $fig($r['fixable'], $u) ?></dd></div><?php endif; ?>
       </dl>
-      <?php if ($canFix && ($r['undated_loose'] > Crates::EPS || $r['deficit'] > Crates::EPS)): ?>
+      <?php if ($canFix && ($r['undated_loose'] > Crates::EPS || $r['deficit'] > Crates::EPS || $fix)): ?>
       <div class="lc-actions">
-        <?php if ($r['deficit'] > Crates::EPS): ?>
+        <?php if ($fix): ?>
+        <form method="post"><?= csrf_field() ?><?= $backFields ?><input type="hidden" name="do" value="repair"><input type="hidden" name="item_id" value="<?= (int)$r['item_id'] ?>"><input type="hidden" name="site_id" value="<?= (int)$r['site_id'] ?>">
+          <button class="btn btn-sm btn-primary"><i class="bi bi-calendar-check"></i> Take the dates from the documents</button></form>
+        <?php elseif ($r['deficit'] > Crates::EPS): ?>
         <form method="post"><?= csrf_field() ?><?= $backFields ?><input type="hidden" name="do" value="align"><input type="hidden" name="item_id" value="<?= (int)$r['item_id'] ?>"><input type="hidden" name="site_id" value="<?= (int)$r['site_id'] ?>">
           <button class="btn btn-sm btn-primary"><i class="bi bi-arrow-repeat"></i> Put in agreement with the crates</button></form>
         <?php endif; ?>
-        <?php if ($r['undated_loose'] > Crates::EPS && $r['deficit'] <= Crates::EPS): ?>
+        <?php if ($r['undated_loose'] > Crates::EPS && $r['deficit'] <= Crates::EPS && !$fix): ?>
         <button type="button" class="btn btn-sm btn-outline-primary" data-lc-give data-item="<?= (int)$r['item_id'] ?>" data-site="<?= (int)$r['site_id'] ?>"
           data-title="<?= h($r['code'] . ' - ' . $r['name']) ?>" data-site-name="<?= h($r['site']) ?>" data-max="<?= h(rtrim(rtrim(number_format($r['undated_loose'], 4, '.', ''), '0'), '.')) ?>" data-unit="<?= h($u) ?>"
           data-crates="<?= $r['crate_item'] ? '1' : '' ?>"><i class="bi bi-calendar-plus"></i> Give dates</button>
@@ -174,7 +244,7 @@ layout_start('Production and Expiry Dates', ['actions' => page_link('inv.adjust'
         <?php if ($src): ?>
         <ul class="lc-sources">
           <?php foreach ($src as $sr): ?>
-          <li><a href="<?= h($sr['url']) ?>"><?= h($sr['type'] . ' ' . ($sr['no'] ?: '#' . $sr['txn_id'])) ?></a>
+          <li<?= $sr['fix'] ? ' class="lc-src-fix"' : '' ?>><a href="<?= h($sr['url']) ?>"><?= h($sr['type'] . ' ' . ($sr['no'] ?: '#' . $sr['txn_id'])) ?></a>
             <span class="lc-src-date"><?= h(fdate($sr['date'])) ?></span>
             <span class="lc-src-qty"><?= $fig($sr['qty'], $u) ?></span>
             <span class="lc-src-why"><?= h($sr['why']) ?></span></li>

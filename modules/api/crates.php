@@ -4,7 +4,8 @@ declare(strict_types=1);
 /**
  * Distribution: the open crates of an item at a site, for the crate window of the transaction forms and the POS.
  * GET item_id=N & site_id=N [& txn=id of the document being edited, whose own crates count back in]
- * [& pack=1: v4, also the groups of loose stock that can be put into crates, with the container's name].
+ * [& pack=1: v4, also the groups of loose stock that can be put into crates, with the container's name; v6: with
+ * 'fixable', the kilos without dates there that came in with dates, and 'why', the Production and Expiry Dates page].
  * Any logged-in user who may see the site: it shows crate numbers, heads, kilos and dates, as the forms do.
  */
 header('Cache-Control: no-store');
@@ -39,5 +40,13 @@ if (g('pack') === '1' && $siteId && $unit) {
     $out['container1'] = Crates::containerName($itemId, false);
     $out['label'] = Crates::convertLabel($itemId);
     $out['lots'] = Lots::on() && Lots::itemTracked($itemId);
+    // v6: kilos without dates here that came in with dates (Production and Expiry Dates puts them back)
+    if ($out['lots'] && array_filter($out['groups'], fn($gr) => !$gr['dated'])) {
+        $row = LotCheck::overview($siteId, $itemId)[0] ?? null;
+        $out['fixable'] = $row ? $row['fixable'] : 0;
+        if (Access::can('inv.lot_check', 'view')) {
+            $out['why'] = url('inv.lot_check', ['site_id' => $siteId, 'q' => (string)DB::value('SELECT code FROM items WHERE id = :i', ['i' => $itemId])]);
+        }
+    }
 }
 json_out($out);

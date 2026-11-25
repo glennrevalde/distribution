@@ -123,14 +123,26 @@ The system serves any number of companies. Each has its **own database**, so no 
 
 The User's Manual (Help button on every page) has a chapter on all of this: **8. Distribution and Crates**.
 
-### Updating from the previous version (v5)
+### Updating from the previous version (v6)
+
+No database update is needed: copy the new program files over the old ones (back up every company database first, as always).
+
+Version 5's **Put in agreement with the crates** could take production and expiry dates off stock that had them: when crates without dates held more than the stock without dates, it moved kilos received with their dates into *No production or expiry date*, so a bill of 1,100 kg with its dates showed on Dispatch Inventory (Kilos to Crates) partly as stock without dates. v6 never does that, and puts it back:
+
+1. Open **Inventory → Production and Expiry Dates** (All sites). Items whose stock came in with dates but shows without them are listed in a box at the top, with the quantity.
+2. Press **Take the dates from the documents**. The date changes of v5 that took the dates off are voided, stock recorded without the dates its document line carries gets them, and crates without dates get the dates of the stock they hold. The quantity and value on hand do not change and nothing is posted to the books.
+3. What is still without dates came in without them (a beginning inventory, for example): give it its dates with **Give dates** where they are known.
+
+The Kilos to Crates window of Dispatch Inventory and Convert Kilos to Crates also says how many of the kilos without dates came in with dates, with a link to that page.
+
+### Updating from v4 (Production and Expiry Dates)
 
 Production and Expiry Dates needs one small database update, `database/migrations/2027_04_05_production_expiry_dates.sql`. It adds the page and gives it to the roles that already have Adjust Quantity/Value on Hand; no table or column is added and no record changes. It is written for MySQL 5.5 and can be run twice safely. Installations that do not have Dispatch Inventory yet run `2027_03_22_dispatch_inventory.sql` (below) first.
 
 1. Back up every company database.
 2. Copy the new program files over the old ones.
 3. Log in as `superadmin` and open **Database updates**: press **Update all companies**. Without the platform, import the file into each company database in phpMyAdmin (Import).
-4. Open **Inventory → Production and Expiry Dates**. Stock received or moved in crates before v5 may show crates whose dates the stock does not carry: press **Put all in agreement with their crates**. Stock that came in without dates (old imports, or before tracking was switched on) is listed with the documents it came from; give it its dates with **Give dates** where they are known.
+4. Open **Inventory → Production and Expiry Dates**. Stock received or moved in crates before v5 may show crates whose dates the stock does not carry: press **Take the dates from the documents** if it is offered, then **Put all in agreement with their crates**. Stock that came in without dates (old imports, or before tracking was switched on) is listed with the documents it came from; give it its dates with **Give dates** where they are known.
 
 ### Updating from v3 (Dispatch Inventory)
 

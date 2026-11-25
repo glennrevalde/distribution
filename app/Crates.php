@@ -1338,6 +1338,6 @@ final class Crates
     public static function kindText(string $kind): string
     {
         return ['receive' => 'Received', 'sale' => 'Sold', 'auto' => 'Taken automatically', 'transfer' => 'Moved', 'convert' => 'Converted to kilos',
-            'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted', 'pack' => 'Packed from loose stock'][$kind] ?? ucfirst($kind);
+            'shrink' => 'Shrinkage', 'shortage' => 'Shortage charged', 'adjust' => 'Adjusted', 'pack' => 'Packed from loose stock', 'dates' => 'Dates given'][$kind] ?? ucfirst($kind);
     }
 }

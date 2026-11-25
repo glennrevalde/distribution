@@ -208,7 +208,7 @@
         const lotH = hid(tr, 'pack-lot');
         window.CrateWindow.open({ dir: 'pack', title, base, figure: true, container: d.container || 'Crates', container1: d.container1 || 'Crate',
           sub: (d.label || 'Kilos to Crates') + ' at ' + (d.site || 'the source site') + ': the ' + base + ' leave the loose stock and go in the ' + String(d.container || 'crates').toLowerCase() + ', with the dates of the group.',
-          groups: d.groups || [], site: d.site, next: d.next || '1', value: h.value, own: h, others: othersOf(tr, id),
+          groups: d.groups || [], site: d.site, next: d.next || '1', value: h.value, own: h, others: othersOf(tr, id), fixable: d.fixable || 0, why: d.why || '',
           lot: lotH.value, prod: hid(tr, 'pack-prod').value, exp: hid(tr, 'pack-exp').value, defaultCount: 5,
           onSave: (list, tot, extra) => {
             h.value = list.length ? JSON.stringify(list) : '';

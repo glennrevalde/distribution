@@ -354,7 +354,12 @@
     const cur = groups.find((g) => g.key === state.lot) || groups[0];
     html += '<div class="pack-dates"' + (cur && cur.dated ? ' hidden' : '') + '><label>Production date<input type="date" class="form-control form-control-sm" data-cw-pprod value="' + esc(state.prod || '') + '"></label>'
       + '<label>Expiry date<input type="date" class="form-control form-control-sm" data-cw-pexp value="' + esc(state.exp || '') + '"></label>'
-      + '<span class="crate-hint">These ' + base + ' have no dates on file: the dates typed here go on every ' + one + ', and on the ' + base + ' put into it.</span></div></div>';
+      + '<span class="crate-hint">These ' + base + ' have no dates on file: the dates typed here go on every ' + one + ', and on the ' + base + ' put into it.'
+      + (state.why && !(num(state.fixable) > 0.00005) ? ' <a href="' + esc(state.why) + '" target="_blank" rel="noopener">Where they came from</a>' : '') + '</span>'
+      // v6: kilos here that came in with dates on their documents (put back on Production and Expiry Dates)
+      + (num(state.fixable) > 0.00005 ? '<div class="pack-fix" role="note"><i class="bi bi-calendar-x"></i><span><strong>' + fq(state.fixable) + ' ' + base + ' of these came in with production and expiry dates</strong> on their documents. '
+        + (state.why ? '<a href="' + esc(state.why) + '" target="_blank" rel="noopener">Take the dates from the documents</a> on Production and Expiry Dates, then open this window again.' : 'Ask for their dates to be taken from the documents on Production and Expiry Dates.') + '</span></div>' : '')
+      + '</div></div>';
     html += '<div class="crate-tools"><div class="crate-add"><label class="visually-hidden" for="cwAddN">' + esc(state.container || 'Crates') + ' to add</label>'
       + '<input id="cwAddN" class="form-control form-control-sm" type="number" min="1" max="200" value="' + (list.length ? 1 : (state.defaultCount || 5)) + '">'
       + '<button type="button" class="btn btn-sm btn-outline-primary" data-cw-padd><i class="bi bi-plus-lg"></i> Add ' + esc(String(state.container || 'crates').toLowerCase()) + '</button></div>'

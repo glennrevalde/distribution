@@ -151,6 +151,7 @@ layout_start('Convert Kilos to Crates', ['actions' => page_link('inv.crate_conve
       window.CrateWindow.open({ dir: 'pack', title: btn.dataset.title, base: d.base || 'kg', figure: true, container: d.container || 'Crates', container1: d.container1 || 'Crate',
         sub: (d.label || 'Kilos to Crates') + ' at ' + (d.site || 'this site') + '. The crates take the dates of the group the stock comes from.',
         groups: d.groups || [], site: d.site, next: d.next || '1', value: f('crates').value, own: f('crates'), lot: f('lot').value, prod: f('prod').value, exp: f('exp').value, defaultCount: 5,
+        fixable: d.fixable || 0, why: d.why || '',
         onSave: (list, tot, extra) => {
           if (!list.length) { form.hidden = true; f('crates').value = ''; return; }
           f('item').value = item; f('crates').value = JSON.stringify(list); f('lot').value = extra.lot; f('prod').value = extra.prod; f('exp').value = extra.exp;

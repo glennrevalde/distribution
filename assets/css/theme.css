@@ -1047,6 +1047,12 @@ tr.row-copied > td { animation: rowNew 1s ease-out; }
 .pack-dates label { display: flex; flex-direction: column; gap: .2rem; margin: 0; font-size: .78rem; font-weight: 600; color: var(--ink-2); }
 .pack-dates input { width: 160px; }
 .pack-dates .crate-hint { flex: 1 1 220px; }
+/* v6: kilos without dates that came in with dates on their documents */
+.pack-fix { flex: 1 1 100%; display: flex; gap: .55rem; align-items: flex-start; padding: .55rem .7rem; border: 1px solid #b9d3e5; border-left: 4px solid var(--cold);
+  border-radius: var(--radius-sm); background: var(--cold-tint); color: var(--ink-2); font-size: .84rem; line-height: 1.45; }
+.pack-fix .bi { color: var(--cold); font-size: 1rem; line-height: 1.3; }
+.pack-fix strong { color: var(--ink); font-weight: 600; }
+.pack-fix a { font-weight: 600; }
 .crate-pack input.crate-fig { width: 112px; margin-left: auto; font-family: var(--font-gauge); font-weight: 700; font-size: 1rem; letter-spacing: .03em; }
 .crate-pack input.crate-kg { background: var(--panel-2); }
 .crate-pack tfoot tr.pack-left th { font-weight: 500; color: var(--steel); border-top: 0; padding-top: 0; }
@@ -1187,7 +1193,7 @@ tr.row-copied > td { animation: rowNew 1s ease-out; }
 .lc-flag-undated { color: #8a6400; }
 .lc-flag-ok { color: var(--ok); }
 .lc-flag .qty-fig { font-family: var(--font-gauge); }
-.lc-figs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; margin: .75rem 0 .1rem; }
+.lc-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: .5rem; margin: .75rem 0 .1rem; }
 .lc-figs > div { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: .45rem .65rem; box-shadow: var(--sunk); }
 .lc-figs dt { font-size: .74rem; font-weight: 500; color: var(--steel); margin: 0; }
 .lc-figs dd { margin: .05rem 0 0; font-size: 1.02rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -1211,13 +1217,28 @@ tr.row-copied > td { animation: rowNew 1s ease-out; }
 .lc-exp.is-expiring { color: var(--warn); }
 .lc-sub { font-family: var(--font-title); font-size: .95rem; font-weight: 600; color: var(--ink); margin: .4rem 0 .35rem; }
 .lc-sources { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; }
-.lc-sources li { display: grid; grid-template-columns: minmax(0, auto) auto auto; justify-content: start; align-items: baseline; gap: .1rem .8rem;
+.lc-sources li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .8rem;
   padding: .4rem .6rem; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--panel); font-size: .86rem; }
 .lc-sources li a { font-weight: 600; }
 .lc-src-date { color: var(--steel); font-size: .8rem; }
 .lc-src-qty { font-weight: 600; font-variant-numeric: tabular-nums; }
-.lc-src-why { grid-column: 1 / -1; color: var(--ink-2); font-size: .82rem; }
+.lc-src-why { flex: 1 1 100%; color: var(--ink-2); font-size: .82rem; }
 .lc-off h2 { font-family: var(--font-title); }
+/* v6: stock that came in with dates but shows without them (taken off by v5, or recorded without the line's dates) */
+.lc-repair { border-color: #b9d3e5; background: linear-gradient(180deg, #f4f9fc, var(--panel) 70%); }
+.lc-repair .card-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .75rem 1.5rem; padding: 1rem 1.1rem; }
+.lc-repair-text { flex: 1 1 32rem; min-width: 0; }
+.lc-repair-text h2 { font-family: var(--font-title); font-size: 1.05rem; font-weight: 600; color: var(--ink); margin: 0 0 .45rem; line-height: 1.35; }
+.lc-repair-text p { font-size: .86rem; color: var(--ink-2); margin: .5rem 0 0; max-width: 72ch; }
+.lc-repair-list { margin: 0; padding: 0 0 0 1.1rem; display: grid; gap: .15rem; }
+.lc-repair-list li { font-size: .9rem; color: var(--ink); }
+.lc-repair-list li::marker { color: var(--cold); }
+.lc-repair-list .qty-fig { font-weight: 700; font-variant-numeric: tabular-nums; }
+.lc-repair-go { margin: 0; flex: 0 0 auto; }
+.lc-item.is-fix::before { background: repeating-linear-gradient(180deg, var(--cold) 0 10px, #083b5c 10px 13px); }
+.lc-flag-fix { color: var(--cold); }
+.lc-figs > div.lc-due { background: var(--cold-tint); border-color: #b9d3e5; }
+.lc-sources li.lc-src-fix { border-color: #b9d3e5; background: #f4f9fc; }
 .import-ignored { background: var(--cold-tint); border: 1px solid #b9d3e5; border-radius: var(--radius-sm); padding: .45rem .65rem; color: var(--ink-2); }
 .import-ignored .bi { color: var(--cold); }
 @media (max-width: 767.98px) {
@@ -1228,12 +1249,14 @@ tr.row-copied > td { animation: rowNew 1s ease-out; }
   .lc-site { display: block; margin: .15rem 0 0; }
   .lc-flag { white-space: normal; }
   .lc-actions .btn { flex: 1 1 100%; }
+  .lc-actions form { flex: 1 1 100%; }
+  .lc-repair .card-body { padding: .85rem .8rem; }
+  .lc-repair-go, .lc-repair-go .btn { width: 100%; }
   .lc-groups thead { display: none; }
   .lc-groups, .lc-groups tbody { display: block; width: 100%; }
   .lc-groups tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .15rem .5rem; padding: .45rem 0; border-bottom: 1px solid var(--line-soft); }
   .lc-groups td { display: block; border: 0; padding: 0; text-align: left !important; background: none !important; }
   .lc-groups td:first-child { grid-column: 1 / -1; font-weight: 600; }
   .lc-groups td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--steel); }
-  .lc-sources li { grid-template-columns: minmax(0, 1fr) auto; }
-  .lc-src-date { grid-row: 2; }
+  .lc-sources li a { flex: 1 1 auto; }
 }
