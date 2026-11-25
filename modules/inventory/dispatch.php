@@ -115,13 +115,16 @@ handle_post(function () use ($pageKey, $type, $edit, $ownOut) {
                 }
                 continue;
             }
+            // v5: the kilos leave the source in the date group they were taken from (the line's dates), and arrive at the
+            // other site in the crates' dates (the group's, or the dates typed for stock that had none)
+            $fromGroup = Lots::split((string)($pk['key'] ?? '|'));
             foreach ($pk['rows'] as $c) {
                 $line = ['line_kind' => 'item', 'item_id' => $iid, 'qty' => (float)$c['qty'], 'description' => $name, 'site_id' => $from,
                     'uom_id' => $crated[$iid]['unit_id'], 'unit' => $crated[$iid]['code'], 'uom_qty' => 1, 'uom_factor' => round((float)$c['qty'], 6),
-                    '_crates' => ['dir' => 'pack', 'rows' => [$c]]];
+                    '_crates' => ['dir' => 'pack', 'rows' => [$c], 'from' => $fromGroup]];
                 if ($lotOn) {
-                    $line['production_date'] = $c['prod'] ?: null;
-                    $line['expiry_date'] = $c['exp'] ?: null;
+                    $line['production_date'] = $fromGroup[0];
+                    $line['expiry_date'] = $fromGroup[1];
                 }
                 $lines[] = $line;
                 $looseCheck[] = ['item_id' => $iid, 'qty' => (float)$c['qty'], 'site_id' => $from];
@@ -153,7 +156,8 @@ handle_post(function () use ($pageKey, $type, $edit, $ownOut) {
                 [$prod, $exp] = Lots::split((string)$key);
                 $k = $iid . '#' . Lots::key($prod, $exp);
                 $wantLot[$k] = round(($wantLot[$k] ?? 0.0) + $q, 4);
-                $have = Lots::qty($iid, $from, $prod, $exp, $exclude);
+                // v5: loose stock only for an item kept in crates (its crates go by the crate)
+                $have = isset($crated[$iid]) ? Lots::looseQty($iid, $from, $prod, $exp, $exclude) : Lots::qty($iid, $from, $prod, $exp, $exclude);
                 if ($wantLot[$k] > $have + 0.00005) {
                     fail($code . ': only ' . qty(max(0, $have)) . ' left with ' . Lots::label($prod, $exp) . ' at the source site. Send at most that from this date group, and the rest from another.');
                 }
@@ -178,7 +182,7 @@ handle_post(function () use ($pageKey, $type, $edit, $ownOut) {
         if ($lotOn) {
             $line += Lots::fromRow($r, $iid, 'out', false, $code);
             if ($line['production_date'] || $line['expiry_date']) {
-                Lots::checkOut($iid, $from, $line['production_date'], $line['expiry_date'], $q, $code, $exclude);
+                Lots::checkOut($iid, $from, $line['production_date'], $line['expiry_date'], $q, $code, $exclude, false, isset($crated[$iid]));
             }
         }
         $lines[] = $line;
@@ -243,7 +247,7 @@ if (is_post()) {
 $rows = $rows ?: [['item_id' => '', 'qty' => ''], ['item_id' => '', 'qty' => ''], ['item_id' => '', 'qty' => '']];
 $ownNow = $ownOut($edit, (int)($edit['site_id'] ?? 0));
 $lotSite = (int)fv('site_id', $edit, array_key_first($sites));
-$lotGroups = $lotTracked ? Lots::forItems(array_filter(array_column($rows, 'item_id')), $lotSite, $edit ? (int)$edit['id'] : null) : [];
+$lotGroups = $lotTracked ? Lots::forItems(array_filter(array_column($rows, 'item_id')), $lotSite, $edit ? (int)$edit['id'] : null, true) : [];
 $crateItems = Crates::ready() ? Crates::crateItems(array_keys($items)) : [];
 $crateOn = (bool)$crateItems;
 $units = stockmove_units(array_keys($items));

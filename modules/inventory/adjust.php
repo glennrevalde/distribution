@@ -141,6 +141,11 @@ if ($a === 'edit') {
         flash('warning', 'A voided adjustment cannot be edited.');
         redirect(Txn::url($edit));
     }
+    // v5: a change of production and expiry dates, or an adjustment that filled crates, is voided and made again
+    if (Lots::isDateChange($edit) || (Crates::ready() && DB::value("SELECT 1 FROM crate_movements WHERE txn_id = :t AND kind = 'pack' LIMIT 1", ['t' => $edit['id']]))) {
+        flash('warning', 'A change of production and expiry dates is not edited: void it, then make the change again on Production and Expiry Dates.');
+        redirect(Txn::url($edit));
+    }
     if (!Access::siteAllowed($edit['site_id'] ? (int)$edit['site_id'] : null)) {
         Access::denyPage($pageKey, 'edit an adjustment of another site on');
     }

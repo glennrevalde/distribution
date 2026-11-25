@@ -16,7 +16,8 @@ if (!Access::siteAllowed($siteId)) {
     json_out(['error' => 'You may not see the stock of that site.'], 403);
 }
 $exclude = (int)g('exclude') ?: null;
-$groups = Lots::forItems(array_slice($ids, 0, 200), $siteId, $exclude);
+// v5: an item kept in crates offers the loose stock of each date group (its crates are chosen by the crate)
+$groups = Lots::forItems(array_slice($ids, 0, 200), $siteId, $exclude, g('all') !== '1');
 foreach ($groups as &$list) {
     foreach ($list as &$g) {
         $g['text'] = Lots::pickText($g);

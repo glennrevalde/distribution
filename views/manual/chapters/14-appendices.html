@@ -802,6 +802,13 @@
 <li><strong>Stock:</strong> the quantity changes at the site of the adjustment, and the average cost is worked out again.</li>
 <li><strong>Editing:</strong> an adjustment can be edited; it is taken off the books, worked out again against the stock without it, and posted again under the same number.</li>
 </ul>
+<h4 id="s-date-change">Date change (an inventory adjustment)<a class="man-hash" href="#s-date-change" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
+<p>Entered on <a href="manual.php?c=inventory#pg-inv-lot_check">Production and Expiry Dates</a>, or by Convert Kilos to Crates when dates are typed for stock without dates.</p>
+<ul>
+<li><strong>Ledger:</strong> nothing. The quantity and the value on hand do not change.</li>
+<li><strong>Stock:</strong> each pair of lines takes a quantity out of one production / expiry date group and puts it into another at the same site, at the value it went out at; the average cost stays the same.</li>
+<li><strong>Editing:</strong> not edited; voiding it puts the stock back in the dates it had (and takes back any crates it filled).</li>
+</ul>
 <h4 id="s-inventory-transfer">Inventory Transfer<a class="man-hash" href="#s-inventory-transfer" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <p>Entered on <a href="manual.php?c=inventory#pg-inv-transfers">Transfer Inventory</a>.</p>
 <ul>

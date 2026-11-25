@@ -46,23 +46,32 @@ final class Posting
             $watch = self::$stockCheck ? self::stockBefore($txnId) : null;
             // v35: where its inventory movements stood, for re-costing the later transactions (app/Recost.php)
             $before = self::$replaying ? null : Recost::footprint($txnId);
-            Stock::reverseTxn($txnId);
-            DB::run('DELETE FROM journal_lines WHERE txn_id = :t', ['t' => $txnId]);
+            // v5: posted again, each line keeps the production / expiry date groups it had
+            $lotsBefore = Stock::$replayLots;
+            if (self::$replaying) {
+                Stock::$replayLots = Stock::captureLots($txnId) + $lotsBefore;
+            }
+            try {
+                Stock::reverseTxn($txnId);
+                DB::run('DELETE FROM journal_lines WHERE txn_id = :t', ['t' => $txnId]);
 
-            $posts = !in_array($t['txn_type'], self::NON_POSTING, true)
-                && (int)$t['is_voided'] === 0
-                && (int)$t['is_pending'] === 0
-                && $t['status'] !== 'suspended';
+                $posts = !in_array($t['txn_type'], self::NON_POSTING, true)
+                    && (int)$t['is_voided'] === 0
+                    && (int)$t['is_pending'] === 0
+                    && $t['status'] !== 'suspended';
 
-            if ($posts) {
-                $engine = new self($t);
-                Stock::$settlements = [];
-                $engine->build();
-                $engine->settled();
-                $engine->write();
-                if ($watch) {
-                    self::stockAfter($watch);
+                if ($posts) {
+                    $engine = new self($t);
+                    Stock::$settlements = [];
+                    $engine->build();
+                    $engine->settled();
+                    $engine->write();
+                    if ($watch) {
+                        self::stockAfter($watch);
+                    }
                 }
+            } finally {
+                Stock::$replayLots = $lotsBefore;
             }
             self::restoreCleared($t, $cleared);
             if ($before !== null) {
@@ -570,6 +579,10 @@ final class Posting
 
     private function adjustment(): void
     {
+        if (Lots::isDateChange($this->t)) {
+            $this->dateChange();
+            return;
+        }
         $adjAcct = (int)($this->t['account_id'] ?: Accts::get('inventory_adjustment'));
         foreach ($this->lines() as $l) {
             if (!Stock::isTracked($l['item_type'])) {
@@ -593,6 +606,38 @@ final class Posting
                 'class_id' => ($l['class_id'] ?? null) ?: ($this->t['class_id'] ?? null)];
             $this->add($this->assetAccount($l), $value, $meta);
             $this->add($adjAcct, -$value, $meta);
+        }
+    }
+
+    /**
+     * v5: a change of production / expiry dates (an inventory adjustment marked Lots::DATE_CHANGE): its lines come in
+     * pairs, the stock taken out of one date group and the same quantity put into another at the same site, at exactly
+     * the value it went out at. The quantity and value on hand do not change, so nothing is posted to the ledger.
+     */
+    private function dateChange(): void
+    {
+        $was = Stock::$settleShortfall;
+        Stock::$settleShortfall = false;
+        try {
+            $value = null;
+            foreach ($this->lines() as $l) {
+                $q = (float)$l['qty'];
+                if (!Stock::isTracked($l['item_type']) || abs($q) <= 0) {
+                    continue;
+                }
+                $group = [[$l['production_date'] ?: null, $l['expiry_date'] ?: null, abs($q)]];
+                if ($q < 0) {
+                    $value = Stock::move((int)$this->t['id'], (int)$l['id'], $this->t['txn_date'], (int)$l['item_id'], $this->site($l), $q, null, 0.0, null, $group);
+                    $this->setLineCost((int)$l['id'], $value);
+                } else {
+                    $in = Stock::move((int)$this->t['id'], (int)$l['id'], $this->t['txn_date'], (int)$l['item_id'], $this->site($l), $q, null, 0.0,
+                        $value !== null ? -$value : null, $group);
+                    $this->setLineCost((int)$l['id'], $in);
+                    $value = null;
+                }
+            }
+        } finally {
+            Stock::$settleShortfall = $was;
         }
     }
 

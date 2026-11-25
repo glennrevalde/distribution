@@ -173,6 +173,7 @@ return [
         'inv.build'            => ['inv', 'Build Assemblies', 'transaction', 'Transactions', 'inventory/build.php', [], 1],
         'inv.process'          => ['inv', 'Disassemble / Process Items', 'transaction', 'Transactions', 'inventory/process.php', [], 1],
         'inv.physical_count'   => ['inv', 'Physical Inventory Count', 'transaction', 'Transactions', 'inventory/physical_count.php', [], 1],
+        'inv.lot_check'        => ['inv', 'Production and Expiry Dates', 'transaction', 'Transactions', 'inventory/lot_check.php', [], 1],
         'inv.change_prices'    => ['inv', 'Change Item Prices', 'transaction', 'Transactions', 'inventory/change_prices.php', [], 1],
         'inv.set_prices'       => ['inv', 'Set Item Prices and Levels', 'transaction', 'Transactions', 'inventory/set_prices.php', [], 1],
         // ---------------- Distribution: stock received, followed and sold by the crate

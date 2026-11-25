@@ -37,12 +37,28 @@ handle_post(function () use ($pageKey) {
     if (!$data) {
         fail('Press Fill crates on the item and type the weight of each crate.');
     }
-    $n = Crates::packAt($itemId, $siteId, $data, mb_substr(trim((string)p('note')), 0, 200), $date);
+    $note = mb_substr(trim((string)p('note')), 0, 200);
     $unit = Crates::baseUnit($itemId);
-    $nos = DB::column("SELECT crate_no FROM crates WHERE item_id = :i AND site_id = :s AND receive_txn_id IS NULL ORDER BY id DESC LIMIT " . (int)$n, ['i' => $itemId, 's' => $siteId]);
+    [$fp, $fe] = Lots::split((string)($data['key'] ?? '|'));
+    $redate = Lots::itemTracked($itemId) && Lots::key($fp, $fe) !== Lots::key($data['prod'] ?? null, $data['exp'] ?? null);
+    if ($redate) {
+        // v5: loose stock without dates given the dates typed: the stock itself moves to those dates (a date change, at
+        // the same value), so the crates and the stock they hold carry the same dates
+        $txnId = LotCheck::changeDates($siteId, $date, [[
+            'item_id' => $itemId, 'qty' => $data['qty'], 'from' => [$fp, $fe], 'to' => [$data['prod'] ?? null, $data['exp'] ?? null],
+            'crates' => ['dir' => 'pack', 'rows' => $data['rows'], 'from' => [$fp, $fe]],
+        ]], 'Loose stock put into ' . strtolower(Crates::containerName($itemId)) . ' with its production and expiry dates' . ($note !== '' ? ' - ' . $note : ''),
+            'Convert Kilos to Crates: dates given to loose stock without dates');
+        $n = (int)DB::value('SELECT COUNT(*) FROM crates WHERE receive_txn_id = :t', ['t' => $txnId]);
+        $nos = DB::column('SELECT crate_no FROM crates WHERE receive_txn_id = :t', ['t' => $txnId]);
+    } else {
+        $n = Crates::packAt($itemId, $siteId, $data, $note, $date);
+        $nos = DB::column("SELECT crate_no FROM crates WHERE item_id = :i AND site_id = :s AND receive_txn_id IS NULL ORDER BY id DESC LIMIT " . (int)$n, ['i' => $itemId, 's' => $siteId]);
+    }
     sort($nos, SORT_NATURAL);
     flash('success', $n . ' ' . strtolower(Crates::containerName($itemId, $n !== 1)) . ' filled: ' . Crates::fig($data['qty'], $unit) . ' ' . $unit . ' of ' . $it['code']
-        . ' is now followed crate by crate (' . ($n === 1 ? 'no. ' . $nos[0] : 'nos. ' . reset($nos) . ' to ' . end($nos)) . ').');
+        . ' is now followed crate by crate (' . ($n === 1 ? 'no. ' . $nos[0] : 'nos. ' . reset($nos) . ' to ' . end($nos)) . ')'
+        . ($redate ? ', with ' . Lots::label($data['prod'] ?? null, $data['exp'] ?? null) . ' on the stock and on the crates (' . Txn::ref(Txn::load($txnId)) . ').' : '.'));
     redirect(url($pageKey, ['site_id' => $siteId]));
 });
 
@@ -72,6 +88,7 @@ layout_start('Convert Kilos to Crates', ['actions' => page_link('inv.crate_conve
 ?>
 <p class="text-muted small page-lead">Loose stock put into crates where it is: pick the production / expiry group, then type each crate's weight as the scale reads it (1330 for 13.30 kg).
   From then on the stock is followed and sold crate by crate. Nothing is posted to the books; the quantity and the value on hand stay the same.
+  Loose stock without dates that is given dates in the crate window takes those dates as well: the change is kept as a date change on Adjustments.
   To fill crates as the stock leaves for a van or outlet, use <?= safe_link('inv.dispatch', ['a' => 'new'], 'Dispatch Inventory') ?>.</p>
 <form method="get" class="filter-bar mb-3"><input type="hidden" name="p" value="<?= h($pageKey) ?>">
   <div class="row g-2 align-items-end">

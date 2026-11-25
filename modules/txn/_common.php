@@ -177,7 +177,7 @@ function parse_item_lines(array $rows, string $mode, array $ctx = []): array
             $lotSite = $base['site_id'] ?: (int)($ctx['site_id'] ?? 0);
             if ($ctx['lots'] === 'out' && $lotSite && ($base['production_date'] || $base['expiry_date'])) {
                 Lots::checkOut($itemId, $lotSite, $base['production_date'], $base['expiry_date'], round($qtyEntered * ($uomId ? Uom::factor($uomId) : 1.0), 4),
-                    $label, $ctx['txn_id'] ?? null, $mode === 'sales');
+                    $label, $ctx['txn_id'] ?? null, $mode === 'sales', $crateDir === 'out' && !$cr);
             }
         }
         // a line of an item group shown as the items in it ("View item details"): it stays part of its group
@@ -578,6 +578,15 @@ function lot_notes(int $txnId): array
     // only the lines that touched a dated group (an item that never had dates shows nothing)
     $by = array_intersect_key($by, $dated);
     foreach ($by as $lineId => $groups) {
+        // v5: stock that left in one date group and arrived in another (loose kilos without dates filled into crates
+        // with dates on a dispatch): "No dates to Prod. ..., Exp. ..."
+        $outs = array_filter($groups, fn($g) => (float)$g['q'] < -0.00005);
+        $ins = array_filter($groups, fn($g) => (float)$g['q'] > 0.00005);
+        if ($outs && $ins && in_array(DB::value('SELECT txn_type FROM transactions WHERE id = :t', ['t' => $txnId]), ['inventory_transfer', 'inventory_dispatch'], true)) {
+            $lab = fn(array $list) => implode('; ', array_map(fn($g) => Lots::label($g['production_date'] ?: null, $g['expiry_date'] ?: null), $list));
+            $out[$lineId] = $lab($outs) . ' to ' . $lab($ins);
+            continue;
+        }
         // a transfer moves each group out and in again: one entry per group is enough
         $seen = [];
         $parts = [];
@@ -703,9 +712,13 @@ function render_txn_view(array $t, string $pageKey): void
     // builds are edited on their own pages)
     $editable = !$voided && !$sigLocked && Access::can($pageKey, 'edit') && !in_array($type, ['pos_sale', 'pos_return', 'depreciation', 'asset_disposal', 'bank_charge', 'bank_interest', 'pos_over_short', 'refund',
         'finance_charge', 'shortage_charge'], true) && !TransferClosing::ownerOf($id);
-    // a transfer or dispatch that moved crates (or filled them from loose stock) is corrected by voiding it: no Edit button
-    if ($editable && in_array($type, ['inventory_transfer', 'inventory_dispatch'], true) && Crates::ready()
+    // a transfer or dispatch that moved crates (or filled them from loose stock), and (v5) a change of production and
+    // expiry dates, are corrected by voiding them: no Edit button
+    if ($editable && in_array($type, ['inventory_transfer', 'inventory_dispatch', 'inventory_adjustment'], true) && Crates::ready()
         && DB::value("SELECT 1 FROM crate_movements WHERE txn_id = :t AND kind IN ('transfer', 'pack') LIMIT 1", ['t' => $id])) {
+        $editable = false;
+    }
+    if ($editable && Lots::isDateChange($t)) {
         $editable = false;
     }
     if ($editable) {
@@ -876,7 +889,7 @@ function render_txn_view(array $t, string $pageKey): void
           <?php endforeach; ?>
           </div>
         </div></div>
-        <?php if ($lines): $lotNotes = lot_notes($id); $crateNotes = crate_notes($id); $stockMove = in_array($type, ['inventory_transfer', 'inventory_dispatch'], true); ?>
+        <?php if ($lines): $lotNotes = lot_notes($id); $crateNotes = crate_notes($id); $stockMove = in_array($type, ['inventory_transfer', 'inventory_dispatch'], true) || Lots::isDateChange($t); ?>
         <?= $groupSwitch !== '' ? '<div class="mb-2">' . $groupSwitch . '</div>' : '' ?>
         <div class="card mb-3"><div class="table-responsive"><table class="table table-sm mb-0">
           <thead><tr>

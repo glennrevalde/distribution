@@ -354,7 +354,7 @@
     const cur = groups.find((g) => g.key === state.lot) || groups[0];
     html += '<div class="pack-dates"' + (cur && cur.dated ? ' hidden' : '') + '><label>Production date<input type="date" class="form-control form-control-sm" data-cw-pprod value="' + esc(state.prod || '') + '"></label>'
       + '<label>Expiry date<input type="date" class="form-control form-control-sm" data-cw-pexp value="' + esc(state.exp || '') + '"></label>'
-      + '<span class="crate-hint">These ' + base + ' have no dates on file: the dates typed here go on every ' + one + '.</span></div></div>';
+      + '<span class="crate-hint">These ' + base + ' have no dates on file: the dates typed here go on every ' + one + ', and on the ' + base + ' put into it.</span></div></div>';
     html += '<div class="crate-tools"><div class="crate-add"><label class="visually-hidden" for="cwAddN">' + esc(state.container || 'Crates') + ' to add</label>'
       + '<input id="cwAddN" class="form-control form-control-sm" type="number" min="1" max="200" value="' + (list.length ? 1 : (state.defaultCount || 5)) + '">'
       + '<button type="button" class="btn btn-sm btn-outline-primary" data-cw-padd><i class="bi bi-plus-lg"></i> Add ' + esc(String(state.container || 'crates').toLowerCase()) + '</button></div>'

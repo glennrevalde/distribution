@@ -388,7 +388,7 @@ $items = DB::all("SELECT i.id, i.code, i.barcode, i.name, i.sales_price, i.item_
 $itemUnits = Uom::unitsByItem(array_map(fn($r) => (int)$r['id'], $items));
 // v43: the production / expiry date groups of the items at the counter's site: each is offered on its own in the list
 // (the FB POS takes them first in, first out)
-$itemLots = !$fbMode && Lots::on() ? Lots::forItems(array_map(fn($r) => (int)$r['id'], $items), $siteId) : [];
+$itemLots = !$fbMode && Lots::on() ? Lots::forItems(array_map(fn($r) => (int)$r['id'], $items), $siteId, null, true) : [];
 // expired stock that may not be sold is not offered
 if ($itemLots && Lots::blockExpired()) {
     foreach ($itemLots as $iid => $groups) {

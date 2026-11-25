@@ -131,7 +131,7 @@ function item_grid(array $lines, array $opt): string
         }
         foreach ($bySite as $sid => $ids) {
             if ($sid) {
-                $lotGroups[$sid] = Lots::forItems($ids, $sid, $opt['lot_txn'] ?? null);
+                $lotGroups[$sid] = Lots::forItems($ids, $sid, $opt['lot_txn'] ?? null, true);   // v5: loose stock of items kept in crates
             }
         }
     }

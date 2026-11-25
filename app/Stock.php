@@ -33,6 +33,37 @@ final class Stock
      */
     public static array $lastLots = [];
 
+    /**
+     * v5 distribution: the production / expiry dates of the crates on the lines of the document being saved, line id =>
+     * ['in' => [[prod, exp, qty], ...] | null, 'out' => ... | null] (Crates::shares). Txn::save fills it for every line
+     * (null for a line without crates) before it posts; a line missing from it (history posted again) reads its crates
+     * from the database (Crates::lotShares).
+     */
+    public static array $crateLots = [];
+
+    /**
+     * v5: when history is posted again (Rebuild Data, re-costing after a back-dated document), each line keeps the
+     * production / expiry date groups it had: line id => ['in' => [[prod, exp, qty], ...], 'out' => ...] (captureLots).
+     * Re-costing is about costs; the dates the stock was given stay as they were.
+     */
+    public static array $replayLots = [];
+
+    /** The date groups each line of a transaction (or of every transaction) moved its stock in, for $replayLots */
+    public static function captureLots(?int $txnId = null): array
+    {
+        if (!Lots::ready()) {
+            return [];
+        }
+        $sql = 'SELECT txn_line_id AS l, production_date AS p, expiry_date AS e, SUM(qty) AS q, SIGN(qty) AS d FROM inventory_movements
+                 WHERE txn_line_id IS NOT NULL AND qty <> 0' . ($txnId ? ' AND txn_id = :t' : '') . '
+                 GROUP BY txn_line_id, production_date, expiry_date, SIGN(qty)';
+        $out = [];
+        foreach (DB::all($sql, $txnId ? ['t' => $txnId] : []) as $r) {
+            $out[(int)$r['l']][(int)$r['d'] > 0 ? 'in' : 'out'][] = [$r['p'] ?: null, $r['e'] ?: null, round(abs((float)$r['q']), 4)];
+        }
+        return $out;
+    }
+
     public static function isTracked(?string $itemType): bool
     {
         return in_array($itemType, self::TRACKED, true);
@@ -332,10 +363,34 @@ final class Stock
      *  - stock going out of an item that keeps dates, with no group chosen: first in, first out (Lots::fifo);
      *  - otherwise: no dates.
      */
-    private static function lotPortions(int $txnId, ?int $lineId, string $date, int $itemId, int $siteId, float $qty, ?array $lots): array
+    private static function lotPortions(int $txnId, ?int $lineId, string $date, int $itemId, int $siteId, float $qty, ?array $lots, bool $crates = true): array
     {
         if (abs($qty) < 0.000001) {
             return [[null, null, $qty]];
+        }
+        // v5: posted again, a line keeps the date groups it had
+        if ($crates && $lineId && Posting::$replaying && !empty(self::$replayLots[$lineId][$qty > 0 ? 'in' : 'out'])) {
+            $lots = self::$replayLots[$lineId][$qty > 0 ? 'in' : 'out'];
+            $crates = false;
+        }
+        // v5: stock received, sold, moved, adjusted or filled in crates goes to (or comes from) the crates' own date groups
+        if ($crates && $lineId && Crates::ready()) {
+            $shares = Crates::lotShares($lineId, $qty > 0);
+            if ($shares) {
+                $sum = round(array_sum(array_map(fn($l) => abs((float)$l[2]), $shares)), 4);
+                $need = round(abs($qty), 4);
+                if ($sum > 0.00005 && $sum >= $need - 0.00005) {
+                    $lots = $shares;            // the crates cover the whole line (shared in proportion when they hold a little more)
+                } elseif ($sum > 0.00005) {
+                    // the crates cover part of it: the rest goes the usual way (the line's dates, or first in, first out)
+                    $sign = $qty > 0 ? 1 : -1;
+                    $out = array_map(fn($l) => [$l[0] ?: null, $l[1] ?: null, round($sign * abs((float)$l[2]), 4)], $shares);
+                    foreach (self::lotPortions($txnId, $lineId, $date, $itemId, $siteId, round($qty - $sign * $sum, 4), null, false) as $p) {
+                        $out[] = $p;
+                    }
+                    return $out;
+                }
+            }
         }
         if ($lots) {
             $sum = array_sum(array_map(fn($l) => abs((float)$l[2]), $lots));
@@ -366,13 +421,22 @@ final class Stock
             }
             // v44: what the other lines of the document still to be moved take from the groups they name is left for them
             $reserved = [];
+            // v5: a line that names no crate of an item kept in crates takes loose stock first: the kilos the open crates
+            // hold are left aside in each date group (and only taken, oldest first, when the loose stock is not enough)
+            if (Crates::ready() && Crates::crateUnit($itemId)) {
+                $reserved = Lots::crateHeld($itemId, $siteId);
+            }
             if ($lineId) {
-                foreach (DB::all('SELECT l.production_date AS p, l.expiry_date AS e, SUM(l.qty) AS q FROM transaction_lines l JOIN transactions t ON t.id = l.txn_id
+                foreach (DB::all('SELECT l.id, l.production_date AS p, l.expiry_date AS e, l.qty AS q FROM transaction_lines l JOIN transactions t ON t.id = l.txn_id
                                    WHERE l.txn_id = :t AND l.item_id = :i AND l.id <> :l AND l.qty > 0 AND COALESCE(l.site_id, t.site_id) = :s
                                      AND (l.production_date IS NOT NULL OR l.expiry_date IS NOT NULL)
-                                     AND NOT EXISTS (SELECT 1 FROM inventory_movements m WHERE m.txn_line_id = l.id)
-                                   GROUP BY l.production_date, l.expiry_date', ['t' => $txnId, 'i' => $itemId, 'l' => $lineId, 's' => $siteId]) as $r) {
-                    $reserved[Lots::key($r['p'] ?: null, $r['e'] ?: null)] = (float)$r['q'];
+                                     AND NOT EXISTS (SELECT 1 FROM inventory_movements m WHERE m.txn_line_id = l.id)', ['t' => $txnId, 'i' => $itemId, 'l' => $lineId, 's' => $siteId]) as $r) {
+                    // a line that takes crates takes them from the kilos already left aside above
+                    if (!empty(self::$crateLots[(int)$r['id']])) {
+                        continue;
+                    }
+                    $k = Lots::key($r['p'] ?: null, $r['e'] ?: null);
+                    $reserved[$k] = round(($reserved[$k] ?? 0.0) + (float)$r['q'], 4);
                 }
             }
             return array_map(fn($p) => [$p[0], $p[1], -$p[2]], Lots::fifo($itemId, $siteId, -$qty, $skipBefore, $reserved));

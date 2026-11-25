@@ -145,6 +145,9 @@ final class Schema
         'database/migrations/2027_03_22_dispatch_inventory.sql' =>
             ['SELECT (SELECT COUNT(*) FROM pages WHERE page_key IN (\'inv.dispatch\', \'inv.crate_pack\'))
                    + (SELECT COUNT(*) FROM sequences WHERE seq_key = \'inv_dispatch\')', 3],
+        // distribution v5: Production and Expiry Dates (the check of the stock's dates, and date changes)
+        'database/migrations/2027_04_05_production_expiry_dates.sql' =>
+            ['SELECT COUNT(*) FROM pages WHERE page_key = \'inv.lot_check\'', 1],
     ];
 
     private static ?array $pending = null;

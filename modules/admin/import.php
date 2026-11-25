@@ -205,7 +205,8 @@ function import_run(string $type, array $rows, bool $dry, string $fileName, stri
             Audit::log('import', 'admin', 'import', null, $def['label'], ['reason' => $ok . ' record(s) from ' . $fileName, 'page_key' => $pageKey]);
         }
     }
-    return ['type' => $type, 'dry' => $dry, 'count' => $count, 'ok' => $ok, 'errors' => $errors, 'preview' => $preview, 'created' => $created, 'file' => $fileName];
+    return ['type' => $type, 'dry' => $dry, 'count' => $count, 'ok' => $ok, 'errors' => $errors, 'preview' => $preview, 'created' => $created, 'file' => $fileName,
+        'ignored' => array_values(array_unique(Importer::$ignored))];
 }
 
 /**
@@ -361,6 +362,25 @@ function import_check_doc(string $type, string $no, array $read, array &$errors)
     $dates = array_unique(array_filter(array_column($read, 'date')));
     if (count($dates) > 1) {
         $errors[] = 'Document ' . $no . ': its lines carry different dates (' . implode(', ', $dates) . ').';
+    }
+    // v5: a bill brings stock in: with production and expiry dates tracked, an item that keeps them needs both
+    if ($type === 'receive_bills' && Lots::on()) {
+        foreach ($read as $r) {
+            $iid = $r['item'] ? (int)$r['item'] : 0;
+            if (!$iid || !Lots::itemTracked($iid)) {
+                continue;
+            }
+            $code = (string)(item_cache($iid)['code'] ?? 'the item');
+            $prod = ($r['production_date'] ?? '') ?: null;
+            $exp = ($r['expiry_date'] ?? '') ?: null;
+            if (!$prod || !$exp) {
+                $errors[] = 'Line ' . $r['_line'] . ': ' . $code . ' keeps production and expiry dates; fill "production_date" and "expiry_date".';
+            } elseif ($exp < $prod) {
+                $errors[] = 'Line ' . $r['_line'] . ': the expiry date of ' . $code . ' (' . fdate($exp) . ') is before its production date (' . fdate($prod) . ').';
+            } elseif (!empty($r['date']) && $prod > $r['date']) {
+                $errors[] = 'Line ' . $r['_line'] . ': the production date of ' . $code . ' (' . fdate($prod) . ') is after the date of the bill (' . fdate($r['date']) . ').';
+            }
+        }
     }
     if ($dup = import_already_there($type, $no, $read)) {
         $errors[] = 'Document ' . $no . ' is already in the books as ' . $dup . '. Take it out of the file, or change its document number.';
@@ -730,12 +750,18 @@ function import_item_line(array $r, string $mode): array
     $rate = (float)$r['rate'];
     $disc = (float)($r['discount_pct'] ?? 0);
     $amount = r2($qty * $rate * (1 - $disc / 100));
-    return [
+    $line = [
         'line_kind' => 'item', 'item_id' => $r['item'], 'description' => $r['description'], 'qty' => $qty, 'rate' => $rate,
         'discount_pct' => $disc, 'amount' => $amount, 'tax_code_id' => $r['tax_code'],
         'tax_amount' => $r['tax_code'] ? r2($amount * tax_rate((int)$r['tax_code']) / 100) : 0,
         'site_id' => $r['site'], 'class_id' => $r['class'],
     ];
+    // v5: stock that comes in carries the production and expiry dates of its line (items that keep them)
+    if ($mode === 'purchase' && Lots::on() && Lots::itemTracked($r['item'] ? (int)$r['item'] : null)) {
+        $line['production_date'] = ($r['production_date'] ?? '') ?: null;
+        $line['expiry_date'] = ($r['expiry_date'] ?? '') ?: null;
+    }
+    return $line;
 }
 
 // ------------------------------------------------------------------ inventory items
@@ -970,7 +996,21 @@ function import_check_items(array &$records, array &$errors): void
                 }
                 $unit = $blank('opening_cost') ? (float)($r['cost'] ?? 0) : (float)$r['opening_cost'];
                 $r['_opening'] = ['qty' => $oq, 'unit' => round($unit, 4), 'value' => r2($oq * $unit), 'site' => (int)$site, 'date' => $date,
-                    'site_name' => $sites[$site] ?? ''];
+                    'site_name' => $sites[$site] ?? '', 'prod' => null, 'exp' => null];
+                // v5: with production and expiry dates tracked, the opening quantity carries its dates (a new item keeps them)
+                if (Lots::on()) {
+                    $prod = ($r['opening_production_date'] ?? '') ?: null;
+                    $exp = ($r['opening_expiry_date'] ?? '') ?: null;
+                    if (!$prod || !$exp) {
+                        $errors[] = 'Line ' . $line . ': production and expiry dates are tracked; fill "opening_production_date" and "opening_expiry_date" for the opening quantity of ' . $code . '.';
+                    } elseif ($exp < $prod) {
+                        $errors[] = 'Line ' . $line . ': the expiry date of the opening quantity (' . fdate($exp) . ') is before its production date (' . fdate($prod) . ').';
+                    } elseif ($prod > $date) {
+                        $errors[] = 'Line ' . $line . ': the production date of the opening quantity (' . fdate($prod) . ') is after the date it is on hand as of (' . fdate($date) . ').';
+                    }
+                    $r['_opening']['prod'] = $prod;
+                    $r['_opening']['exp'] = $exp;
+                }
             }
         } elseif (!$blank('opening_cost') && (float)$r['opening_cost'] > 0) {
             $errors[] = 'Line ' . $line . ': an opening cost needs an opening quantity.';
@@ -1105,7 +1145,8 @@ function import_write_items(array $records, string $pageKey): array
         if ($r['_opening']) {
             $o = $r['_opening'];
             $openings[$o['site'] . '|' . $o['date']][] = ['line_kind' => 'item', 'item_id' => $id, 'qty' => $o['qty'], 'rate' => $o['unit'],
-                'amount' => $o['value'], 'site_id' => $o['site'], 'description' => 'Opening balance'];
+                'amount' => $o['value'], 'site_id' => $o['site'], 'description' => 'Opening balance']
+                + (Lots::on() && ($o['prod'] || $o['exp']) ? ['production_date' => $o['prod'], 'expiry_date' => $o['exp']] : []);
         }
         $created[] = ['type' => 'item', 'id' => $id, 'name' => trim((string)$r['code']) . ' ' . ($d['name'] ?? $ex['name'] ?? ''), 'updated' => !$new];
     }
@@ -1181,6 +1222,11 @@ layout_start('Import from CSV', ['actions' => page_link('admin.backup', [], 'Bac
   <div class="card-header fw-semibold"><?= $result['errors'] ? 'The file was not imported' : ($result['dry'] ? 'The file was checked' : 'Imported') ?>:
     <?= h($result['file']) ?>, <?= (int)$result['count'] ?> <?= $result['type'] === 'items' ? 'item(s)' : (in_array($result['type'], ['accounts', 'customers', 'vendors', 'fixed_assets'], true) ? 'record(s)' : 'document(s)') ?></div>
   <div class="card-body">
+    <?php if (!empty($result['ignored'])): ?>
+      <p class="import-ignored small"><i class="bi bi-info-circle"></i> Not read, because "<?= h($types[$result['type']]['label'] ?? '') ?>" has no such column:
+        <strong><?= h(implode(', ', array_slice($result['ignored'], 0, 12))) ?></strong><?= count($result['ignored']) > 12 ? ' and ' . (count($result['ignored']) - 12) . ' more' : '' ?>.
+        The template lists the columns that are read.</p>
+    <?php endif; ?>
     <?php if ($result['errors']): ?>
       <p class="mb-2">Nothing was written. Correct these lines in the spreadsheet and try again:</p>
       <ul class="small mb-0 text-danger" style="max-height:320px;overflow:auto">

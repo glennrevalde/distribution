@@ -21,9 +21,19 @@ declare(strict_types=1);
  *
  * Tracking is switched on in System Administration > Company, Security & Closing Date > Inventory and POS
  * ("Track inventory production date and expiry date"); an item can be marked as not expiring on the Item List.
+ *
+ * v5 distribution: stock in crates follows its crates' own dates. A line that receives, sells, moves, adjusts or fills
+ * crates posts its stock to the date groups of those crates (Stock::lotPortions, Crates::shares), and a line that names
+ * no crate of an item kept in crates takes loose stock: the kilos held in open crates are left out of what it can take
+ * (crateHeld, looseQty, forItems with $loose). Dates are given to stock, or put in agreement with its crates, with a
+ * date change: an inventory adjustment marked DATE_CHANGE that moves a quantity from one date group to another at the
+ * same value (Posting, LotCheck).
  */
 final class Lots
 {
+    /** transactions.received_via of an inventory adjustment that only changes the production / expiry dates of stock */
+    public const DATE_CHANGE = 'date_change';
+
     /** database name => the columns are there (migration 2027_02_18) */
     private static array $ready = [];
     private static array $itemFlag = [];
@@ -253,6 +263,39 @@ final class Lots
     }
 
     /**
+     * v5: the kilos (or packs) of an item that open crates hold at a site, by date group: key => qty. $excludeTxnId:
+     * as if that transaction had not been entered (the crates it sold are open again, the ones it filled are not there).
+     */
+    public static function crateHeld(int $itemId, int $siteId, ?int $excludeTxnId = null): array
+    {
+        if (!Crates::ready()) {
+            return [];
+        }
+        $out = [];
+        foreach (Crates::open($itemId, $siteId, $excludeTxnId) as $c) {
+            $k = self::key($c['production_date'] ?: null, $c['expiry_date'] ?: null);
+            $out[$k] = round(($out[$k] ?? 0.0) + (float)$c['qty_left'], 4);
+        }
+        return $out;
+    }
+
+    /** v5: the loose stock of one date group (what is not in an open crate): Lots::qty() less the crates of that group */
+    public static function looseQty(int $itemId, int $siteId, ?string $prod, ?string $exp, ?int $excludeTxnId = null): float
+    {
+        $q = self::qty($itemId, $siteId, $prod, $exp, $excludeTxnId);
+        if (Crates::ready() && Crates::crateUnit($itemId)) {
+            $q -= self::crateHeld($itemId, $siteId, $excludeTxnId)[self::key($prod, $exp)] ?? 0.0;
+        }
+        return round($q, 4);
+    }
+
+    /** v5: an inventory adjustment that only moves stock from one production / expiry date group to another */
+    public static function isDateChange(?array $t): bool
+    {
+        return $t !== null && ($t['txn_type'] ?? '') === 'inventory_adjustment' && ($t['received_via'] ?? '') === self::DATE_CHANGE;
+    }
+
+    /**
      * How a quantity going out is split over the date groups, first in first out: [[prod, exp, qty], ...] with qty
      * positive. What the groups do not cover goes to the last group taken (or to "no dates" when there is none),
      * which then shows below zero, as stock sold below zero does. With $skipExpiredBefore (a date), the groups that
@@ -282,6 +325,34 @@ final class Lots
             $out[] = [$g['prod'], $g['exp'], round($take, 4)];
             $need = round($need - $take, 4);
         }
+        // v5: what the free stock does not cover comes out of the stock left aside (the kilos in crates), oldest first
+        if ($need >= 0.00005 && $reserved) {
+            $took = [];
+            foreach ($out as $o) {
+                $took[self::key($o[0], $o[1])] = $o[2];
+            }
+            foreach (self::available($itemId, $siteId) as $g) {
+                if ($need < 0.00005) {
+                    break;
+                }
+                if ($skipExpiredBefore && $g['exp'] && $g['exp'] < $skipExpiredBefore) {
+                    continue;
+                }
+                $room = round($g['qty'] - ($took[$g['key']] ?? 0.0), 4);
+                if ($room < 0.00005) {
+                    continue;
+                }
+                $take = min($need, $room);
+                $out[] = [$g['prod'], $g['exp'], round($take, 4)];
+                $need = round($need - $take, 4);
+            }
+            $merged = [];
+            foreach ($out as $o) {
+                $k = self::key($o[0], $o[1]);
+                $merged[$k] = isset($merged[$k]) ? [$o[0], $o[1], round($merged[$k][2] + $o[2], 4)] : $o;
+            }
+            $out = array_values($merged);
+        }
         if ($need >= 0.00005) {
             if ($out) {
                 $out[array_key_last($out)][2] = round($out[array_key_last($out)][2] + $need, 4);
@@ -296,7 +367,7 @@ final class Lots
      * Fails when a line takes more of its chosen date group than the site has, unless stock may go below zero
      * (settings); and when the group has expired and expired stock may not be sold.
      */
-    public static function checkOut(int $itemId, int $siteId, ?string $prod, ?string $exp, float $qty, string $itemLabel, ?int $excludeTxnId = null, bool $isSale = false): void
+    public static function checkOut(int $itemId, int $siteId, ?string $prod, ?string $exp, float $qty, string $itemLabel, ?int $excludeTxnId = null, bool $isSale = false, bool $loose = false): void
     {
         if ($qty <= 0 || (!$prod && !$exp)) {
             return;
@@ -304,7 +375,8 @@ final class Lots
         if ($isSale && self::blockExpired() && $exp && $exp < today()) {
             fail($itemLabel . ': the stock with ' . self::label($prod, $exp) . ' has expired and may not be sold.');
         }
-        $have = self::qty($itemId, $siteId, $prod, $exp, $excludeTxnId);
+        // v5: a line that names no crate of an item kept in crates takes the loose stock of the group
+        $have = $loose ? self::looseQty($itemId, $siteId, $prod, $exp, $excludeTxnId) : self::qty($itemId, $siteId, $prod, $exp, $excludeTxnId);
         if ($have + 0.00005 < $qty && Settings::get('allow_negative_stock', '1') !== '1') {
             fail($itemLabel . ': only ' . qty(max(0, $have)) . ' left with ' . self::label($prod, $exp) . ' at this site. Choose another date group or a smaller quantity.');
         }
@@ -331,6 +403,10 @@ final class Lots
             if (!$iid || $q <= 0 || !$site || !self::itemTracked($iid)) {
                 continue;
             }
+            // v5: a line that names crates takes those crates (and their dates); it is checked against them
+            if (!empty($l['_crates']['rows'])) {
+                continue;
+            }
             $k = $iid . ':' . $site;
             if (!empty($l['production_date']) || !empty($l['expiry_date'])) {
                 $key = self::key($l['production_date'] ?: null, $l['expiry_date'] ?: null);
@@ -347,8 +423,10 @@ final class Lots
             $where = $sites[$site] ?? 'this site';
             $have = [];
             $groups = [];
-            foreach (self::available($iid, $site, $excludeTxnId) as $g) {
-                $have[$g['key']] = $g['qty'];
+            // v5: an item kept in crates sells only its loose stock on a line that names no crate
+            $held = Crates::ready() && Crates::crateUnit($iid) ? self::crateHeld($iid, $site, $excludeTxnId) : [];
+            foreach (self::available($iid, $site, $excludeTxnId, true) as $g) {
+                $have[$g['key']] = round($g['qty'] - ($held[$g['key']] ?? 0.0), 4);
                 $groups[$g['key']] = $g;
             }
             foreach ($named[$k] ?? [] as $key => $q) {
@@ -384,7 +462,7 @@ final class Lots
      * The date groups of several items at a site, for the forms and the POS:
      * item id => [[key, prod, exp, qty, label, status, days], ...] (only groups with stock).
      */
-    public static function forItems(array $itemIds, int $siteId, ?int $excludeTxnId = null): array
+    public static function forItems(array $itemIds, int $siteId, ?int $excludeTxnId = null, bool $loose = false): array
     {
         $ids = array_keys(self::trackedIds($itemIds));
         if (!$ids) {
@@ -398,10 +476,21 @@ final class Lots
             $p['x'] = $excludeTxnId;
         }
         $out = [];
+        // v5: for a line that names no crate, an item kept in crates offers only its loose stock in each date group
+        $held = [];
+        if ($loose && Crates::ready()) {
+            foreach (array_keys(Crates::crateItems($ids)) as $cid) {
+                $held[$cid] = self::crateHeld($cid, $siteId, $excludeTxnId);
+            }
+        }
         foreach (DB::all($sql . ' GROUP BY item_id, production_date, expiry_date HAVING SUM(qty) >= 0.00005', $p) as $r) {
             $prod = $r['pd'] ?: null;
             $exp = $r['ed'] ?: null;
-            $out[(int)$r['item_id']][] = ['key' => self::key($prod, $exp), 'prod' => $prod, 'exp' => $exp, 'qty' => round((float)$r['q'], 4),
+            $q = round((float)$r['q'] - ($held[(int)$r['item_id']][self::key($prod, $exp)] ?? 0.0), 4);
+            if ($q < 0.00005) {
+                continue;
+            }
+            $out[(int)$r['item_id']][] = ['key' => self::key($prod, $exp), 'prod' => $prod, 'exp' => $exp, 'qty' => $q,
                 'label' => self::label($prod, $exp), 'status' => self::status($exp), 'days' => self::daysLeft($exp)];
             $out[(int)$r['item_id']][array_key_last($out[(int)$r['item_id']])]['text'] = self::pickText(end($out[(int)$r['item_id']]));
         }

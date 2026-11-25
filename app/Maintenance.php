@@ -208,6 +208,8 @@ final class Maintenance
                 }
                 $itemIds = array_map('intval', DB::column('SELECT DISTINCT item_id FROM inventory_movements'));
 
+                // v5: each line keeps the production / expiry date groups it had
+                Stock::$replayLots = Stock::captureLots();
                 // clear the perpetual records, then post again in date order
                 DB::run('DELETE FROM inventory_movements');
                 DB::run('UPDATE item_site_stock SET qty_on_hand = 0');
@@ -223,6 +225,7 @@ final class Maintenance
                 } finally {
                     Posting::$stockCheck = true;
                     Posting::$replaying = false;
+                    Stock::$replayLots = [];
                 }
                 // v31: and every quick-lookup quantity agrees with the movements it came from
                 Stock::resync();

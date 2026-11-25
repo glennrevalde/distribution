@@ -269,6 +269,7 @@ final class Txn
             $keep = [];
             $n = 0;
             $crateMap = [];     // distribution: line id => the crates of the line (Crates::afterSave)
+            $shareMap = [];     // v5: line id => the date groups of the line's crates (null: no crates), for the posting
             foreach ($lines as $l) {
                 $lineId = isset($l['id']) ? (int)$l['id'] : 0;
                 $hasCrates = array_key_exists('_crates', $l);
@@ -284,6 +285,13 @@ final class Txn
                 }
                 if ($hasCrates) {
                     $crateMap[(int)end($keep)] = $crates;
+                }
+                // v5: a line edited by a form that does not send its crates (Enter Bill for Received Items) keeps the
+                // dates of the crates it has on file (left out of the map: Crates::lotShares reads them)
+                if ($hasCrates) {
+                    $shareMap[(int)end($keep)] = Crates::ready() ? Crates::shares($crates) : null;
+                } elseif (!($lineId && in_array($lineId, $existing, true))) {
+                    $shareMap[(int)end($keep)] = null;
                 }
             }
             foreach (array_diff($existing, $keep) as $gone) {
@@ -317,7 +325,14 @@ final class Txn
                 Withholding::store($id, $opt['withholdings']);
             }
 
-            Posting::post($id);
+            // v5: the stock of a line in crates goes to (or comes from) its crates' own production / expiry date groups
+            $sharesBefore = Stock::$crateLots;
+            Stock::$crateLots = $shareMap + $sharesBefore;
+            try {
+                Posting::post($id);
+            } finally {
+                Stock::$crateLots = $sharesBefore;
+            }
             // distribution: the crates the lines received or took, and the crates kept in step with the stock on hand
             Crates::afterSave($id, $crateMap);
             // the item groups sold on the document (Sales by Item Group, POS Sales by Item Group)

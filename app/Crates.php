@@ -830,6 +830,114 @@ final class Crates
         DB::update('crates', ['qty_left' => $left, 'status' => $status], 'id = :id', ['id' => $crateId]);
     }
 
+    // ------------------------------------------------------------------ v5: the dates of the stock in crates
+
+    /**
+     * The production / expiry date groups a line's crates put stock into ('in') and take it out of ('out'), from what
+     * the form sent for the line (the _crates of Txn::save): ['in' => [[prod, exp, qty], ...] | null, 'out' => ...],
+     * or null when the line names no crate.
+     *  - in: crates received (each crate's own dates);
+     *  - out: crates sold from, or charged as shrinkage or shortage (the kilos taken, each in its crate's dates);
+     *  - adjust: kilos put back in a crate come in, kilos taken out go out, each in its crate's dates;
+     *  - move: whole crates leave one site and arrive at the other in their own dates;
+     *  - pack: loose stock leaves in the date group it was taken from ('from'), and arrives in the crates' dates.
+     */
+    public static function shares(?array $data): ?array
+    {
+        if (!$data || empty($data['rows']) || !is_array($data['rows'])) {
+            return null;
+        }
+        $dir = (string)($data['dir'] ?? '');
+        $in = [];
+        $out = [];
+        $dates = function (array $r): array {
+            if (array_key_exists('prod', $r) || array_key_exists('exp', $r)) {
+                return [($r['prod'] ?? null) ?: null, ($r['exp'] ?? null) ?: null];
+            }
+            $c = !empty($r['id']) ? DB::row('SELECT production_date, expiry_date FROM crates WHERE id = :id', ['id' => (int)$r['id']]) : null;
+            return $c ? [$c['production_date'] ?: null, $c['expiry_date'] ?: null] : [null, null];
+        };
+        foreach ($data['rows'] as $r) {
+            $q = round((float)($r['qty'] ?? 0), 4);
+            if ($dir === 'in' || $dir === 'pack') {
+                $in[] = [($r['prod'] ?? null) ?: null, ($r['exp'] ?? null) ?: null, $q];
+            } elseif ($dir === 'out') {
+                [$p, $e] = $dates($r);
+                $out[] = [$p, $e, $q];
+            } elseif ($dir === 'adjust') {
+                [$p, $e] = $dates($r);
+                if ($q > 0) {
+                    $in[] = [$p, $e, $q];
+                } elseif ($q < 0) {
+                    $out[] = [$p, $e, -$q];
+                }
+            } elseif ($dir === 'move' && !empty($r['id'])) {
+                $c = DB::row('SELECT production_date, expiry_date, qty_left FROM crates WHERE id = :id', ['id' => (int)$r['id']]);
+                if ($c) {
+                    $in[] = $out[] = [$c['production_date'] ?: null, $c['expiry_date'] ?: null, round((float)$c['qty_left'], 4)];
+                }
+            }
+        }
+        if ($dir === 'pack' && !empty($data['from']) && is_array($data['from'])) {
+            $total = round(array_sum(array_map(fn($l) => $l[2], $in)), 4);
+            $out[] = [($data['from'][0] ?? null) ?: null, ($data['from'][1] ?? null) ?: null, $total];
+        }
+        return ['in' => self::mergeShares($in), 'out' => self::mergeShares($out)];
+    }
+
+    /** [[prod, exp, qty], ...] with one entry per date group and nothing at zero; null when empty */
+    private static function mergeShares(array $list): ?array
+    {
+        $m = [];
+        foreach ($list as $l) {
+            if ((float)$l[2] <= self::EPS) {
+                continue;
+            }
+            $k = Lots::key($l[0], $l[1]);
+            $m[$k] = isset($m[$k]) ? [$l[0], $l[1], round($m[$k][2] + (float)$l[2], 4)] : [$l[0], $l[1], round((float)$l[2], 4)];
+        }
+        return $m ? array_values($m) : null;
+    }
+
+    /**
+     * The date groups a line's crates move stock in ($incoming) or out of, for Stock::move: from the document being
+     * saved (Stock::$crateLots), or, for a line the form did not send crates for (a receipt converted into a bill,
+     * history posted again), from the crates and crate movements the line has on file. Null: no crates that way.
+     */
+    public static function lotShares(int $lineId, bool $incoming): ?array
+    {
+        if (array_key_exists($lineId, Stock::$crateLots)) {
+            $m = Stock::$crateLots[$lineId];
+            return $m ? ($m[$incoming ? 'in' : 'out'] ?? null) : null;
+        }
+        if (!self::ready()) {
+            return null;
+        }
+        // crates made by the line: received in crates, or filled from loose stock (they leave the source in the line's dates)
+        $made = DB::all('SELECT production_date AS p, expiry_date AS e, qty_in AS q FROM crates WHERE receive_line_id = :l', ['l' => $lineId]);
+        if ($made) {
+            return $incoming ? self::mergeShares(array_map(fn($c) => [$c['p'] ?: null, $c['e'] ?: null, (float)$c['q']], $made)) : null;
+        }
+        $list = [];
+        foreach (DB::all('SELECT m.kind, m.qty, c.production_date AS p, c.expiry_date AS e,
+                                 c.qty_in - COALESCE((SELECT SUM(x.qty) FROM crate_movements x WHERE x.crate_id = m.crate_id AND x.id < m.id
+                                                        AND x.kind IN (' . self::sqlKinds(self::TAKE_KINDS) . ')), 0) AS w
+                            FROM crate_movements m JOIN crates c ON c.id = m.crate_id
+                           WHERE m.line_id = :l AND m.kind IN (\'sale\', \'shrink\', \'shortage\', \'adjust\', \'transfer\')', ['l' => $lineId]) as $r) {
+            $q = (float)$r['qty'];
+            if ($r['kind'] === 'transfer') {
+                $list[] = [$r['p'] ?: null, $r['e'] ?: null, (float)$r['w']];
+            } elseif ($r['kind'] === 'adjust') {
+                if (($q < 0) === $incoming) {
+                    $list[] = [$r['p'] ?: null, $r['e'] ?: null, abs($q)];
+                }
+            } elseif (!$incoming) {
+                $list[] = [$r['p'] ?: null, $r['e'] ?: null, $q];
+            }
+        }
+        return self::mergeShares($list);
+    }
+
     /**
      * The open crates of an item at a site never hold more than the stock on hand there. When they would (stock
      * taken out without naming a crate), the difference is taken from the oldest crates, recorded against $txnId.
@@ -842,20 +950,58 @@ final class Crates
         }
         $crates = DB::all("SELECT * FROM crates WHERE item_id = :i AND site_id = :s AND status = 'open' ORDER BY (expiry_date IS NULL), expiry_date, received_date, id",
             ['i' => $itemId, 's' => $siteId]);
+        // v5: with production and expiry dates kept, the kilos come first out of the crates of the date groups the stock
+        // no longer holds (what left took them from those groups), then from the oldest crates
+        $over = [];
+        if (Lots::itemTracked($itemId)) {
+            $stock = [];
+            foreach (DB::all('SELECT production_date AS p, expiry_date AS e, SUM(qty) AS q FROM inventory_movements WHERE item_id = :i AND site_id = :s
+                               GROUP BY production_date, expiry_date', ['i' => $itemId, 's' => $siteId]) as $r) {
+                $stock[Lots::key($r['p'] ?: null, $r['e'] ?: null)] = (float)$r['q'];
+            }
+            foreach (Lots::crateHeld($itemId, $siteId) as $k => $q) {
+                if ($q - ($stock[$k] ?? 0.0) > self::EPS) {
+                    $over[$k] = round($q - ($stock[$k] ?? 0.0), 4);
+                }
+            }
+        }
+        $take = function (array $c, float $q, string $why) use ($date, $txnId, $siteId, &$excess): void {
+            DB::insert('crate_movements', [
+                'crate_id' => (int)$c['id'], 'move_date' => $date, 'kind' => 'auto', 'txn_id' => $txnId, 'qty' => $q, 'site_id' => $siteId,
+                'note' => $why, 'created_by' => Auth::id(),
+            ]);
+            self::recompute((int)$c['id']);
+            $excess = round($excess - $q, 4);
+        };
+        $left = [];
+        foreach ($crates as $c) {
+            $left[(int)$c['id']] = (float)$c['qty_left'];
+        }
+        if ($over) {
+            foreach ($crates as $c) {
+                $k = Lots::key($c['production_date'] ?: null, $c['expiry_date'] ?: null);
+                if ($excess <= self::EPS || empty($over[$k]) || $over[$k] <= self::EPS) {
+                    continue;
+                }
+                $q = round(min($excess, $left[(int)$c['id']], $over[$k]), 4);
+                if ($q <= self::EPS) {
+                    continue;
+                }
+                $take($c, $q, 'Taken out without naming a crate (from its date group)');
+                $left[(int)$c['id']] = round($left[(int)$c['id']] - $q, 4);
+                $over[$k] = round($over[$k] - $q, 4);
+            }
+        }
         foreach ($crates as $c) {
             if ($excess <= self::EPS) {
                 break;
             }
-            $take = round(min($excess, (float)$c['qty_left']), 4);
-            if ($take <= self::EPS) {
+            $q = round(min($excess, $left[(int)$c['id']]), 4);
+            if ($q <= self::EPS) {
                 continue;
             }
-            DB::insert('crate_movements', [
-                'crate_id' => (int)$c['id'], 'move_date' => $date, 'kind' => 'auto', 'txn_id' => $txnId, 'qty' => $take, 'site_id' => $siteId,
-                'note' => 'Taken out without naming a crate (oldest crate first)', 'created_by' => Auth::id(),
-            ]);
-            self::recompute((int)$c['id']);
-            $excess = round($excess - $take, 4);
+            $take($c, $q, 'Taken out without naming a crate (oldest crate first)');
+            $left[(int)$c['id']] = round($left[(int)$c['id']] - $q, 4);
         }
     }
 

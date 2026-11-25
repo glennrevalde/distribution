@@ -1148,7 +1148,7 @@
 <ul>
 <li>The template is an Excel workbook (<code>.xlsx</code>). Fill in its <strong>Import</strong> sheet and save it as it is, with <strong>Save</strong> (Ctrl+S): the workbook keeps its columns whatever program saves it (Excel, WPS or LibreOffice) and whatever the computer's regional setting, so it comes back the way it went out. Its <strong>How to fill</strong> sheet lists each column, whether it is needed, the values it accepts and an example. The columns that name a list entry (customer, item, site, account, terms, tax code, class and the rest) have a drop-down of the company's own entries, and the columns with fixed words (account type, Debit / Credit, Yes / No) a drop-down of those words. Every column but the amounts is formatted as text, so codes keep their leading zeros (0101) and dates stay as typed.</li>
 <li>A CSV file is read as well (the file name ends in <code>.csv</code> or <code>.txt</code>); <strong>or as CSV</strong> beside the template button gives the same columns as a CSV. Its columns may be split by commas, semicolons or tabs (for example a sheet saved as <strong>Text (Tab delimited)</strong> and renamed to .csv). Any of the ways Excel saves a CSV is read correctly: <strong>CSV (Comma delimited)</strong> in Windows' own encoding, <strong>CSV UTF-8</strong> and <strong>Unicode Text</strong> (UTF-16, with tabs). Curly quotes (“Mismo” brand), dashes, the peso sign and accented letters in a name or a description come through as typed; they used to stop the import with an "Incorrect string value" error.</li>
-<li>The first line holds the column names, such as <code>code</code>, <code>name</code> and <code>opening_qty</code>. The order does not matter, capitals do not matter, and a space may stand for the underscore (<code>Sales Price</code> is read as <code>sales_price</code>). A column you do not need can be left out. A column the program does not know is ignored. Blank lines are skipped.</li>
+<li>The first line holds the column names, such as <code>code</code>, <code>name</code> and <code>opening_qty</code>. The order does not matter, capitals do not matter, and a space may stand for the underscore (<code>Sales Price</code> is read as <code>sales_price</code>). A column you do not need can be left out. A column the program does not know is not read: the result of the check names it under <em>Not read</em>, so a misspelt column is not missed. Blank lines are skipped.</li>
 <li>Dates may be written as 2026-09-30, 09/30/2026, Sep 30, 2026 and in other common ways; in a workbook, a cell Excel shows as a date is read as that date. A date such as 03/04/2026 is read month first, as March 4.</li>
 <li>Numbers may have comma separators (12,500.00). Do not type a peso sign or other text in a number column.</li>
 <li>Yes/no columns accept Yes, Y, 1, True, Oo or Opo for yes. Anything else counts as no.</li>
@@ -1340,6 +1340,11 @@
 <td><code>opening_date</code></td>
 <td>Date of the opening quantity. Blank = today.</td>
 <td></td>
+</tr>
+<tr>
+<td><code>opening_production_date</code>, <code>opening_expiry_date</code></td>
+<td>Production date and expiry date of the opening quantity. The production date cannot be after the opening date, nor the expiry date before the production date.</td>
+<td>With <code>opening_qty</code>, when production and expiry dates are tracked</td>
 </tr>
 <tr>
 <td><code>is_active</code></td>
@@ -1753,6 +1758,7 @@
 </tr>
 </tbody>
 </table></div>
+<p><strong>Receive items and enter bills</strong> also has <code>production_date</code> and <code>expiry_date</code>: with production and expiry dates tracked, both are needed on every line of an item that keeps them, as on the Enter Bills form, and the stock comes in with those dates. The production date cannot be after the date of the bill. Purchase orders have no dates (nothing comes into stock).</p>
 <p>Each <strong>Receive items and enter bills</strong> document becomes a bill with the vendor's terms: the items come into stock and 2000 Accounts Payable is credited, as on <a href="manual.php?c=vendors#pg-vend-receive_bill">Receive Items and Enter Bills</a>. A bill is refused as a duplicate when the supplier's invoice number (or the <code>doc_no</code>, if <code>ref_no</code> is blank) is already on a bill. Purchase orders are saved as open orders and do not post (see <a href="manual.php?c=vendors#pg-vend-purchase_orders">Create Purchase Orders</a>).</p>
 <h4 id="s-write-checks-the-columns">Write checks: the columns<a class="man-hash" href="#s-write-checks-the-columns" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <div class="table-responsive man-table"><table class="table table-sm">

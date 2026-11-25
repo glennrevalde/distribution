@@ -272,7 +272,7 @@ function seed_master_data(): void
                 'cust.center' => 'P', 'cust.payments' => 'P', 'cust.invoices' => 'P', 'vend.center' => 'P',
                 'vend.bill_tracker' => 'P', 'vend.bills' => 'P', 'vend.pay_bills' => 'P', 'vend.advances' => 'P', 'bir:*' => 'CEDP',
                 'inv.center' => 'P', 'inv.items' => 'P', 'inv.categories' => 'P', 'inv.adjust' => 'P', 'inv.process' => 'P', 'inv.formulas' => 'P', 'inv.uom' => 'P',
-                'inv.transfer_closing' => 'P', 'inv.shortages' => 'P', 'admin.utilities' => 'P',
+                'inv.transfer_closing' => 'P', 'inv.shortages' => 'P', 'inv.lot_check' => 'P', 'admin.utilities' => 'P',
             ],
             'special' => ['view_costs' => '1', 'view_bank_balances' => '1', 'coa_changes' => '1', 'max_amount' => '', 'max_discount_pct' => '0', 'max_price_override_pct' => '0', 'credit_limit_override' => '0', 'closed_period_changes' => '0', 'design_reports' => '1'],
         ],
@@ -292,7 +292,7 @@ function seed_master_data(): void
             'desc' => 'Items, sites, receiving, adjustments, assembly builds, disassembly and processing orders, stock counts, and inventory quantity reports.',
             'pages' => [
                 'home:*' => 'P', 'inv.center' => 'P', 'inv.items' => 'CEP', 'inv.categories' => 'CEDP', 'inv.sites' => 'CEP', 'inv.transfers' => 'CEP',
-                'inv.adjust' => 'CEP', 'inv.build' => 'CEP', 'inv.physical_count' => 'P',
+                'inv.adjust' => 'CEP', 'inv.build' => 'CEP', 'inv.physical_count' => 'P', 'inv.lot_check' => 'CP',
                 'inv.process' => 'CEP', 'inv.formulas' => 'CEP', 'inv.uom' => 'CEP', 'rpt.processing_register' => 'P', 'rpt.process_yield' => 'P',
                 'vend.receive_items' => 'CEP', 'vend.purchase_orders' => 'P', 'vend.pickup' => 'CEP', 'vend.allocations' => 'P', 'vend.supplier_items' => 'P',
                 'inv.crates' => 'P', 'inv.crate_convert' => 'CP', 'inv.crate_pack' => 'CP', 'inv.crate_move' => 'CP', 'group:Crate Reports' => 'P', 'rpt.alloc_pickup' => 'P',

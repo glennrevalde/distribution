@@ -115,7 +115,8 @@ handle_post(function () use ($pageKey, $edit, $ownOut) {
                 [$prod, $exp] = Lots::split((string)$key);
                 $k = $iid . '#' . Lots::key($prod, $exp);
                 $wantLot[$k] = round(($wantLot[$k] ?? 0.0) + $q, 4);
-                $have = Lots::qty($iid, $from, $prod, $exp, $exclude);
+                // v5: loose stock only for an item kept in crates (its crates go by the crate)
+                $have = isset($crated[$iid]) ? Lots::looseQty($iid, $from, $prod, $exp, $exclude) : Lots::qty($iid, $from, $prod, $exp, $exclude);
                 if ($wantLot[$k] > $have + 0.00005) {
                     fail($code . ': only ' . qty(max(0, $have)) . ' left with ' . Lots::label($prod, $exp) . ' at the source site. Move at most that from this date group, and the rest from another.');
                 }
@@ -140,7 +141,7 @@ handle_post(function () use ($pageKey, $edit, $ownOut) {
         if (Lots::on() && Lots::itemTracked($iid)) {
             $line += Lots::fromRow($r, $iid, 'out', false, $code);
             if ($line['production_date'] || $line['expiry_date']) {
-                Lots::checkOut($iid, $from, $line['production_date'], $line['expiry_date'], to_num($r['qty'] ?? 0), $code, $exclude);
+                Lots::checkOut($iid, $from, $line['production_date'], $line['expiry_date'], to_num($r['qty'] ?? 0), $code, $exclude, false, isset($crated[$iid]));
             }
         }
         $lines[] = $line;
@@ -204,7 +205,7 @@ $rows = $rows ?: [['item_id' => '', 'qty' => ''], ['item_id' => '', 'qty' => '']
 $ownNow = $ownOut($edit, (int)($edit['site_id'] ?? 0));
 // v44: the production / expiry date groups at the source site, filled in under each line of an item that keeps dates
 $lotSite = (int)fv('site_id', $edit, array_key_first($sites));
-$lotGroups = $lotTracked ? Lots::forItems(array_filter(array_column($rows, 'item_id')), $lotSite, $edit ? (int)$edit['id'] : null) : [];
+$lotGroups = $lotTracked ? Lots::forItems(array_filter(array_column($rows, 'item_id')), $lotSite, $edit ? (int)$edit['id'] : null, true) : [];
 $lotItemsJson = json_encode((object)array_map(fn() => 1, $lotTracked));
 // v2 distribution: items kept in crates get a Crates button: the crates chosen move whole to the other site
 $crateItems = Crates::ready() ? Crates::crateItems(array_keys($items)) : [];

@@ -48,7 +48,8 @@ final class Importer
                 'note'  => 'One line per item. An item whose code is already on the Item List is updated rather than added again, and only the columns in the file are changed. '
                     . 'Type is Inventory part when left blank. A category that is not on the list yet is added. '
                     . 'Assemblies and groups list their components as "CODE x quantity", separated by semicolons; a component must already exist or appear earlier in the file. '
-                    . 'Fill "Opening quantity" for new inventory parts and assemblies that are already in stock: one inventory adjustment per site and date is posted against Opening Balance Equity.',
+                    . 'Fill "Opening quantity" for new inventory parts and assemblies that are already in stock: one inventory adjustment per site and date is posted against Opening Balance Equity. '
+                    . 'With production and expiry dates tracked, an opening quantity needs its production date and expiry date.',
                 'columns' => self::itemColumns(),
                 'sample' => self::itemSample(),
             ],
@@ -160,10 +161,10 @@ final class Importer
             'receive_bills' => [
                 'label' => 'Receive items and enter bills',
                 'group' => 'Supplier transactions',
-                'note'  => 'One line per item line, grouped by "Document no.". Each document becomes a bill: the items come into stock and Accounts Payable is credited.',
+                'note'  => 'One line per item line, grouped by "Document no.". Each document becomes a bill: the items come into stock and Accounts Payable is credited. With production and expiry dates tracked, fill both dates on every line of an item that keeps them.',
                 'txn'   => 'bill',
                 'columns' => self::purchaseColumns('bill'),
-                'sample' => ['BILL-IMP-001', '2026-09-01', 'Bicol Packaging Supply', 'SI-99120', 'PKG-BAG', 'Vacuum Bag 2 kg', '500', '4.50', 'VAT12', 'Naga Cold Storage', 'Head Office', 'Imported bill'],
+                'sample' => ['BILL-IMP-001', '2026-09-01', 'Northfield Poultry Corp.', 'SI-99120', 'BRS-FZ', 'Chicken Breast, Frozen', '100', '180', 'VAT12', 'Naga Cold Storage', 'Head Office', 'Imported bill', '2026-08-30', '2027-02-26'],
             ],
             'checks' => [
                 'label' => 'Write checks',
@@ -317,6 +318,8 @@ final class Importer
             'opening_cost'     => ['Opening cost per unit (blank = the Cost column)', 'num'],
             'opening_site'     => ['Site the opening quantity is at, code or name (blank = the only site)', 'ref:sites'],
             'opening_date'     => ['Opening quantity as of (blank = today)', 'date'],
+            'opening_production_date' => ['Production date of the opening quantity (needed when production and expiry dates are tracked)', 'date'],
+            'opening_expiry_date'     => ['Expiry date of the opening quantity (needed when production and expiry dates are tracked)', 'date'],
             'is_active'        => ['Yes for an active item; blank counts as yes', 'bool'],
         ];
     }
@@ -329,7 +332,8 @@ final class Importer
             'description' => 'Chicken Thigh, Frozen', 'purchase_description' => 'Chicken Thigh, Frozen (supplier code NPC-THG)', 'category' => 'Chicken Cuts',
             'unit' => 'kg', 'cost' => '160', 'sales_price' => '195', 'tax_code' => 'VAT12', 'preferred_vendor' => 'Northfield Poultry Corp.',
             'reorder_point' => '100', 'max_stock' => '800', 'opening_qty' => '250', 'opening_cost' => '160', 'opening_site' => 'Naga Cold Storage',
-            'opening_date' => today(), 'is_active' => 'Yes',
+            'opening_date' => today(), 'opening_production_date' => date('Y-m-d', strtotime('-1 day')), 'opening_expiry_date' => date('Y-m-d', strtotime('+6 months')),
+            'is_active' => 'Yes',
         ];
         return array_map(fn($k) => $example[$k] ?? '', array_keys(self::itemColumns()));
     }
@@ -359,7 +363,7 @@ final class Importer
 
     private static function purchaseColumns(string $type): array
     {
-        return [
+        $cols = [
             'doc_no'      => ['Document no. (your own reference; lines with the same one make one document)', 'text', true],
             'date'        => ['Date', 'date', true],
             'vendor'      => ['Supplier', 'ref:vendors', true],
@@ -373,6 +377,12 @@ final class Importer
             'class'       => ['Class', 'ref:classes'],
             'memo'        => ['Memo (header)', 'text'],
         ];
+        // v5: what comes into stock on a bill carries its production and expiry dates, as on the Enter Bills form
+        if ($type === 'bill') {
+            $cols['production_date'] = ['Production date (needed for items that keep dates, when production and expiry dates are tracked)', 'date'];
+            $cols['expiry_date'] = ['Expiry date (needed for items that keep dates, when production and expiry dates are tracked)', 'date'];
+        }
+        return $cols;
     }
 
     public static function type(string $key): ?array
@@ -521,8 +531,12 @@ final class Importer
     }
 
     /** Reads an uploaded CSV into rows keyed by the column names of the type */
+    /** v5: the column names of the file last read that are not columns of its import type (they are not read) */
+    public static array $ignored = [];
+
     public static function read(string $file, string $key): array
     {
+        self::$ignored = [];
         $t = self::type($key);
         if (!$t) {
             fail('Choose what to import.');
@@ -556,6 +570,8 @@ final class Importer
             $n = strtolower(trim(str_replace([' ', '-'], '_', (string)$name)));
             if (isset($t['columns'][$n])) {
                 $map[$i] = $n;
+            } elseif (trim((string)$name) !== '') {
+                self::$ignored[] = trim((string)$name);
             }
         }
         if (!$map) {
@@ -608,6 +624,13 @@ final class Importer
                 $best = ['sheet' => $sheet, 'head' => $headNo, 'map' => $map];
             }
             $first = $first ?? $sheet['rows'][$headNo];
+        }
+        if ($best) {
+            foreach ($best['sheet']['rows'][$best['head']] as $i => $name) {
+                if (!isset($best['map'][$i]) && trim((string)$name) !== '') {
+                    self::$ignored[] = trim((string)$name);
+                }
+            }
         }
         if (!$best) {
             fail('Row 1 of the workbook must hold the column names (' . implode(', ', array_slice(array_keys($t['columns']), 0, 4)) . ', ...). '

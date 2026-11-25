@@ -145,6 +145,13 @@ final class Recost
         $items = array_map('intval', DB::column('SELECT DISTINCT item_id FROM inventory_movements WHERE txn_date >= :d', ['d' => $date]));
 
         DB::tx(function () use ($txns, $items, $date) {
+            // v5: each line posted again keeps the production / expiry date groups it had
+            $lotsBefore = Stock::$replayLots;
+            $kept = [];
+            foreach ($txns as $t) {
+                $kept += Stock::captureLots((int)$t['id']);
+            }
+            Stock::$replayLots = $kept + $lotsBefore;
             // back to where the items stood before the date
             DB::run('DELETE FROM inventory_movements WHERE txn_date >= :d', ['d' => $date]);
             Stock::resync($items);
@@ -175,6 +182,7 @@ final class Recost
             } finally {
                 Posting::$replaying = $wasReplaying;
                 Posting::$stockCheck = $wasCheck;
+                Stock::$replayLots = $lotsBefore;
             }
             Stock::resync($items);
             Audit::log('recost', 'inv', 'transaction', null, 'Costs from ' . fdate($date), [
