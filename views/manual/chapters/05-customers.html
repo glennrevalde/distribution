@@ -939,7 +939,7 @@
 </tr>
 <tr>
 <td><strong>Deposit to</strong></td>
-<td>Where the money goes. 1050 Undeposited Funds by default.</td>
+<td>Where the money goes. 1050 Undeposited Funds by default. A payment type linked to a G.L. account (<a href="manual.php?c=point-of-sale#pg-pos-payment_types">Payment Types &amp; G.L. Accounts</a>) sets it to that account and locks it.</td>
 </tr>
 <tr>
 <td><strong>Pending (non-posting until marked final)</strong></td>
@@ -1326,12 +1326,16 @@
 <td>How it was paid. Filled from the customer.</td>
 </tr>
 <tr>
-<td><strong>Check / reference no.</strong></td>
-<td>The check number or transfer reference.</td>
+<td><strong>Reference no.</strong></td>
+<td>The transfer or deposit reference. Not shown for a check: its number goes in the check details.</td>
 </tr>
 <tr>
 <td><strong>Deposit to</strong></td>
-<td>Where the money goes. 1050 Undeposited Funds by default.</td>
+<td>Where the money goes. 1050 Undeposited Funds by default. A payment method linked to a G.L. account (<a href="manual.php?c=point-of-sale#pg-pos-payment_types">Payment Types &amp; G.L. Accounts</a>) sets it to that account and locks it: <em>BPI is linked to this account.</em></td>
+</tr>
+<tr>
+<td><strong>Check details</strong></td>
+<td>For a payment method of the kind Check: <strong>Check date</strong>, <strong>Check number</strong> and <strong>Bank</strong>; <strong>Amount</strong> shows the amount received. See <a href="#s-paying-by-check">Paying by check</a>.</td>
 </tr>
 <tr>
 <td><strong>Class</strong></td>
@@ -1402,7 +1406,7 @@
 <p>To record a payment:</p>
 <ol>
 <li>Choose the customer in <strong>Received from</strong>.</li>
-<li>Check the <strong>Date</strong>, choose the <strong>Payment method</strong> and type the <strong>Check / reference no.</strong></li>
+<li>Check the <strong>Date</strong>, choose the <strong>Payment method</strong> and type the <strong>Reference no.</strong> (for a check, its date, number and bank).</li>
 <li>Type the <strong>Amount received</strong>, or leave it blank for now.</li>
 <li>Tick the invoices being paid. With no amount typed, each ticked invoice is paid in full and the amount received adds itself up. With an amount typed, each ticked invoice gets what is left of it, and the program tells you when an invoice can only be paid in part.</li>
 <li>Or, after typing the amount received, click <strong>Auto-apply amount</strong>: the amount is spread over the invoices, oldest due first. Anything left over stays as a credit for the customer.</li>
@@ -1412,6 +1416,12 @@
 </ol>
 <p>The program shows "Payment saved." and opens the payment.</p>
 <div class="man-callout man-example"><div class="man-callout-t"><i class="bi bi-journal-text"></i>Example</div><p>ABC Trading Corp. pays INV-00001 with a check of ₱100,000.00 and a BIR Form 2307 for ₱1,500.00 withheld. Tick the tax in the <strong>Withholding</strong> box of INV-00001 and type 1,500.00 over its amount, and type 100,000.00 in <strong>Payment</strong>: the invoice is reduced by ₱101,500.00.</p></div>
+<h4 id="s-paying-by-check">Paying by check<a class="man-hash" href="#s-paying-by-check" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
+<p>Choose a payment method of the kind <strong>Check</strong> and the <strong>Check details</strong> appear: type the <strong>Check date</strong>, the <strong>Check number</strong> and the <strong>Bank</strong> (type it or pick one offered). Tick the invoices and save as usual.</p>
+<ul><li><strong>A check dated today or earlier</strong> is a payment at once. The payment carries the check number, and the check is kept with it on <a href="#pg-cust-checks">Customer Checks</a> as <strong>On Date</strong>; the payment shows <strong>Check</strong>: its bank, number and date.</li><li><strong>A post-dated check</strong> (dated after today) is not a payment yet. A note under the check details says so. Saving keeps only its receipt: nothing is recorded in the books, the invoices stay open, and the check opens on Customer Checks as <strong>Pending</strong>. It is on the user's report as <strong>Receipt of Post Dated Check</strong> (<a href="#pg-rpt-cashier_collections">Collections by Cashier / User</a>). On the check's date the payment is recorded, dated the check's date, applied to the invoices ticked as far as they are still open (the rest stays as a credit), and its journal entries are made.</li></ul>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/cust_payments_check.jpg" title="Click to enlarge"><img src="assets/manual/img/cust_payments_check.jpg" alt="A post-dated check on Receive Payments: the check details and the note" width="1094" height="760" loading="lazy" decoding="async"></a><figcaption>A post-dated check on Receive Payments: the check details and the note</figcaption></figure>
+<p>A post-dated check pays the invoices only: discounts, taxes withheld and credits are recorded separately ("A post-dated check pays the invoices only. Record discounts, taxes withheld and credits separately, or when the check is recorded on its date."). A payment already recorded cannot be changed to a post-dated check. Other messages: "Enter the check date.", "Enter the check number.", "Enter the bank the check is drawn on.", "The check date is more than a year away. Check the date." and "Check … of this customer is already on the Check Registry (dated …)."</p>
+<p>An invoice a post-dated check is already meant for shows it under its number, so it is not paid twice by mistake.</p>
 <h4 id="s-the-taxes-the-customer-withheld">The taxes the customer withheld<a class="man-hash" href="#s-the-taxes-the-customer-withheld" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <p>The <strong>Withholding</strong> box of an invoice opens the taxes of the <a href="manual.php?c=bir-reports#pg-bir-wht_table">Withholding Tax Table</a> that apply to payments from customers. Tick the ones the customer withheld (one or more): each amount is worked out from the open balance net of VAT and can be typed over, and the <strong>Payment</strong> on the invoice drops by the same figure. A customer's usual taxes (<strong>Taxes this customer withholds</strong> on its record) are ticked when its invoice is ticked. The box works even before the invoice is ticked: its tax base already shows the open balance net of VAT, and ticking a tax ticks the invoice.</p>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/cust_payments__wht_menu.jpg" title="Click to enlarge"><img src="assets/manual/img/cust_payments__wht_menu.jpg" alt="The withholding taxes of an invoice: WT on Goods 1% ticked" width="1100" height="724" loading="lazy" decoding="async"></a><figcaption>The withholding taxes of an invoice: WT on Goods 1% ticked</figcaption></figure>
@@ -1487,7 +1497,97 @@
 <li>Credits recorded on a job are not listed when you receive a payment from the customer. Open the job's credit memo and click <strong>Apply credit to invoices</strong> instead.</li>
 <li>A payment included in a bank deposit cannot be voided or deleted until it is removed from the deposit. Voiding a payment removes its applications, so its invoices are open again.</li>
 <li>Money in Undeposited Funds reaches the bank account with <a href="manual.php?c=banking#pg-bank-deposits">Make Deposits</a>.</li>
+<li>A payment whose check was marked Returned cannot be voided until the Returned is undone on <a href="#pg-cust-checks">Customer Checks</a>; a payment whose check is Cleared or Returned keeps its check details and amount.</li>
 </ul>
+<h2 id="pg-cust-checks">Customer Checks<a class="man-hash" href="#pg-cust-checks" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p>Every check received from a customer, at the POS or on Receive Payments, with its status. It is where a check is marked <strong>Cleared</strong> or <strong>Returned</strong> after it was deposited. The printable list is the <a href="#pg-rpt-check_registry">Check Registry</a>.</p>
+<p><strong>Where to find it:</strong> Customers &gt; Customer Checks. Also from a payment paid by check, from the Check Registry, and from Payment Types &amp; G.L. Accounts.</p>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Status</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pending</strong></td>
+<td>The check is post-dated: only its receipt is kept, nothing is in the books yet.</td>
+</tr>
+<tr>
+<td><strong>On Date</strong></td>
+<td>The date of the check is on or before today: its payment is recorded.</td>
+</tr>
+<tr>
+<td><strong>Cleared</strong></td>
+<td>It was deposited to the bank and honored.</td>
+</tr>
+<tr>
+<td><strong>Returned</strong></td>
+<td>It was deposited to the bank and dishonored.</td>
+</tr>
+</tbody>
+</table></div>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/cust_checks_list.jpg" title="Click to enlarge"><img src="assets/manual/img/cust_checks_list.jpg" alt="Customer Checks: every status, the checks On Date ready to mark cleared" width="1094" height="946" loading="lazy" decoding="async"></a><figcaption>Customer Checks: every status, the checks On Date ready to mark cleared</figcaption></figure>
+<p>The tabs on top show <strong>Pending and On Date</strong> (as the page opens), each status and <strong>All</strong>, with the number of checks in each. Filter by the dates of <strong>The check</strong> or of the <strong>Receipt</strong>, the <strong>Customer</strong>, or a <strong>Bank or check no.</strong>. Each row shows the <strong>Check date</strong>, <strong>Customer</strong>, <strong>Bank</strong>, <strong>Check no.</strong>, <strong>Amount</strong>, <strong>Status</strong>, when and by whom it was <strong>Received</strong> (POS or Receive Payments) and its <strong>Payment</strong> (or the date it will be recorded).</p>
+<p>To mark several checks cleared at once, tick the checks On Date, choose the date, type a note (for example the deposit slip) and click <strong>Mark cleared</strong>.</p>
+<h3 id="s-one-check">One check<a class="man-hash" href="#s-one-check" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>Click a customer or a check number to open the check: the bank, number, date, amount and status, who received it and where, its payment, the account it went to, the bank deposit it is on, the invoices it paid (or, while post-dated, the invoices it is to pay and their balance now) and its history. <strong>What happened to the check</strong> holds what can be done:</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/cust_check_view.jpg" title="Click to enlarge"><img src="assets/manual/img/cust_check_view.jpg" alt="A check On Date: mark it cleared, or returned" width="1094" height="649" loading="lazy" decoding="async"></a><figcaption>A check On Date: mark it cleared, or returned</figcaption></figure>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Record payment</strong></td>
+<td>A post-dated check whose date has come but whose payment is not recorded yet (for example the books were closed): records it, dated the check date unless another date is chosen.</td>
+</tr>
+<tr>
+<td><strong>Mark cleared</strong></td>
+<td>Deposited and honored, on the date chosen, with a note. Nothing is posted: the money is already in the account it was deposited to.</td>
+</tr>
+<tr>
+<td><strong>Mark returned</strong></td>
+<td>Deposited and dishonored. The amount goes back on the customer's account with a <strong>statement charge</strong> ("Returned check BDO no. … dated …: the reason"), due at once, credited to the bank account the check was deposited to (or to the account the payment went to when it was never deposited). Collect it like any charge on Receive Payments.</td>
+</tr>
+<tr>
+<td><strong>Set back</strong></td>
+<td>A check marked Cleared or Returned by mistake goes back to On Date; the statement charge of a returned check is voided. The reason is required.</td>
+</tr>
+<tr>
+<td><strong>Remove</strong></td>
+<td>A post-dated check not recorded yet that was given back, replaced or entered by mistake leaves the list. Nothing was recorded in the books for it. The reason is required (needs delete rights).</td>
+</tr>
+</tbody>
+</table></div>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/cust_check_returned.jpg" title="Click to enlarge"><img src="assets/manual/img/cust_check_returned.jpg" alt="A returned check: the statement charge that puts it back on the account" width="1094" height="620" loading="lazy" decoding="async"></a><figcaption>A returned check: the statement charge that puts it back on the account</figcaption></figure>
+<h4 id="s-what-a-returned-check-records">What a returned check records<a class="man-hash" href="#s-what-a-returned-check-records" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Account</th>
+<th>Debit</th>
+<th>Credit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1100 Accounts Receivable (the customer)</td>
+<td>Check amount</td>
+<td></td>
+</tr>
+<tr>
+<td>The bank account of the deposit (for example 1010 Cash in Bank - BDO Checking)</td>
+<td></td>
+<td>Check amount</td>
+</tr>
+</tbody>
+</table></div>
+<ul><li>The payment and the invoices it paid stay as they were; the customer owes the amount again through the charge.</li><li>A Cleared or Returned check is not changed from Receive Payments, and the charge of a returned check is voided only by <strong>Set back</strong>.</li><li>A user limited to some sites sees the checks taken at the counters of those sites, and the checks of Receive Payments.</li><li>As delivered, those who receive payments may use it; those who make bank deposits may mark checks Cleared or Returned.</li></ul>
 <h2 id="pg-cust-credit_memos">Create Credit Memos/Refunds<a class="man-hash" href="#pg-cust-credit_memos" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
 <p>A credit memo reduces what a customer owes: for goods returned, a price correction or an allowance. The credit can be kept for later, applied to an invoice at once, or paid back as a refund. This page also records refunds of overpayments.</p>
 <p><strong>Where to find it:</strong> Customers &gt; Create Credit Memos/Refunds. Also <strong>Credit memo</strong> in the Customer Center, and <strong>Create Credit Memos/Refunds</strong> under Quick actions on the Home dashboard.</p>
@@ -1689,6 +1789,16 @@
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/rpt_collections__report.jpg" title="Click to enlarge"><img src="assets/manual/img/rpt_collections__report.jpg" alt="The Collections Report as of 09/27/2026" width="1094" height="1100" loading="lazy" decoding="async"></a><figcaption>The Collections Report as of 09/27/2026</figcaption></figure>
 <p>Filters: <strong>As of</strong> and <strong>Customer</strong>. Each customer heading shows the <strong>Contact</strong>, <strong>Phone</strong> (phone and mobile) and the email in the <strong>Num / email</strong> column. Under it: <strong>Type</strong>, <strong>Date</strong>, <strong>Num / email</strong> (the document number), <strong>Due date</strong>, <strong>Days overdue</strong> and <strong>Amount due</strong>, with a total per customer. Documents not yet due and unapplied credits are left out.</p>
 <p>The report can also be narrowed by <strong>Customer type</strong> (see <a href="manual.php?c=home-and-reports#sec-related-filters">Filters on related records</a>).</p>
+<h3 id="pg-rpt-check_registry">Check Registry<a class="man-hash" href="#pg-rpt-check_registry" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>The CHECK REGISTRY: every check received from customers, from the POS and from Receive Payments, with its status.</p>
+<p><strong>Where to find it:</strong> Customers &gt; Reports &gt; Check Registry, and <strong>Check Registry</strong> on Customer Checks.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/rpt_check_registry__report.jpg" title="Click to enlarge"><img src="assets/manual/img/rpt_check_registry__report.jpg" alt="The Check Registry: Pending, On Date, Cleared and Returned" width="1046" height="582" loading="lazy" decoding="async"></a><figcaption>The Check Registry: Pending, On Date, Cleared and Returned</figcaption></figure>
+<p>Columns: <strong>Customer Name</strong>, <strong>Bank</strong>, <strong>Check Number</strong>, <strong>Check Date</strong>, <strong>Amount</strong> and <strong>Status</strong> (<strong>Pending</strong> when the check is post-dated, <strong>On Date</strong> when its date is on or before today, <strong>Cleared</strong> when it was deposited and honored, <strong>Returned</strong> when it was deposited and dishonored). The total gives the number of checks and their amount, and the note above the table the count and amount of each status. Filters: <strong>Dates</strong> (all dates as it opens), <strong>Customer</strong>, <strong>Status</strong>, <strong>Dates of</strong> (the check date or the date received) and <strong>Received on</strong> (POS, Receive Payments or both). A customer or check number opens the check on Customer Checks. It prints, saves as PDF and exports like every report.</p>
+<h3 id="pg-rpt-cashier_collections">Collections by Cashier / User<a class="man-hash" href="#pg-rpt-cashier_collections" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>What each cashier or user collected from customers (at the POS and on Receive Payments), by payment type, and the post-dated checks they received: their <strong>Receipt of Post Dated Check</strong>.</p>
+<p><strong>Where to find it:</strong> Customers &gt; Reports &gt; Collections by Cashier / User.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/rpt_cashier_collections__report.jpg" title="Click to enlarge"><img src="assets/manual/img/rpt_cashier_collections__report.jpg" alt="Collections by Cashier / User, every payment, with the Receipt of Post Dated Check" width="1046" height="974" loading="lazy" decoding="async"></a><figcaption>Collections by Cashier / User, every payment, with the Receipt of Post Dated Check</figcaption></figure>
+<p>Each cashier or user has a heading with the payments collected and their total, then one line per payment type. <strong>Show: Every payment</strong> lists each payment under its type (date, number, customer and the check or reference). <strong>Receipt of Post Dated Check</strong> follows, with each check's customer, bank, number, check date and the date received, in the <strong>Post-dated checks</strong> column: they are not payments yet and are not in <strong>Collected</strong>. A post-dated check is collected on its check date, by the cashier who received it. Filters: <strong>Dates</strong> (today as it opens), <strong>Cashier / user</strong>, <strong>Received on</strong> and <strong>Show</strong>.</p>
 <h3 id="pg-rpt-avg_days_summary">Average Days to Pay Summary<a class="man-hash" href="#pg-rpt-avg_days_summary" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
 <p>Shows how many days, on average, each customer takes to pay an invoice in full. Use it to review credit terms and credit limits.</p>
 <p><strong>Where to find it:</strong> Customers &gt; Reports &gt; Average Days to Pay Summary</p>

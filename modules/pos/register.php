@@ -43,6 +43,16 @@ if ($a === 'receipt') {
         $lines = ItemGroups::collapse($lines);
     }
     $tenders = DB::all('SELECT pt.*, pm.name FROM pos_tenders pt JOIN payment_methods pm ON pm.id = pt.payment_method_id WHERE pt.txn_id = :id', ['id' => $t['id']]);
+    // v9: a customer's payment shows how it was paid (a check with its bank, number and date) and the invoices it paid
+    $payApplied = [];
+    if ($t['txn_type'] === 'payment') {
+        $payChk = Checks::forPayment((int)$t['id']);
+        $payBy = PayTypes::get($t['payment_method_id'] ? (int)$t['payment_method_id'] : null);
+        $tenders = [['name' => $payBy['name'] ?? 'Payment', 'reference' => $payChk ? $payChk['bank'] . ' no. ' . $payChk['check_no'] . ' dated ' . fdate($payChk['check_date']) : (string)$t['ref_no'],
+            'amount' => $t['total']]];
+        $payApplied = DB::all('SELECT tg.txn_no, pa.amount FROM payment_applications pa JOIN transactions tg ON tg.id = pa.target_txn_id
+                                WHERE pa.payment_txn_id = :p ORDER BY tg.txn_date, tg.id', ['p' => $t['id']]);
+    }
     $s = Settings::all();
     $term = DB::row('SELECT * FROM pos_terminals WHERE id = :id', ['id' => $t['terminal_id']]);
     $cashier = DB::value('SELECT full_name FROM users WHERE id = :id', ['id' => $t['created_by']]);
@@ -95,10 +105,52 @@ if ($a === 'receipt') {
         <?php endif; ?>
         <tr class="fw-bold"><td>TOTAL</td><td class="text-end"><?= money($t['total']) ?></td></tr>
         <?php foreach ($tenders as $tn): ?><tr><td><?= h($tn['name']) ?> <?= h($tn['reference']) ?></td><td class="text-end"><?= money($tn['amount']) ?></td></tr><?php endforeach; ?>
+        <?php foreach ($payApplied as $ap): ?><tr><td>&nbsp; Applied to <?= h($ap['txn_no']) ?></td><td class="text-end"><?= money($ap['amount']) ?></td></tr><?php endforeach; ?>
+        <?php if ($t['txn_type'] === 'payment' && ($payLeft = r2((float)$t['total'] - array_sum(array_column($payApplied, 'amount')))) > 0.004): ?><tr><td>&nbsp; Kept as credit</td><td class="text-end"><?= money($payLeft) ?></td></tr><?php endif; ?>
         <?php if ((float)$t['amount_tendered'] > 0): ?><tr><td>Amount tendered</td><td class="text-end"><?= money($t['amount_tendered']) ?></td></tr><tr><td>Change</td><td class="text-end"><?= money($t['change_given']) ?></td></tr><?php endif; ?>
       </table>
       <hr class="my-1">
       <div class="text-center"><?= implode('<br>', array_map('h', $footerLines)) ?></div>
+    </div>
+    <?php
+    layout_end();
+    return;
+}
+
+// ------------------------------------------------------------------ v9: acknowledgement of a post-dated check
+if ($a === 'check_receipt') {
+    $ck = Checks::ready() ? Checks::load((int)g('id')) : null;
+    if (!$ck || $ck['source'] !== 'pos') {
+        redirect(url($pageKey));
+    }
+    $s = Settings::all();
+    $term = DB::row('SELECT * FROM pos_terminals WHERE id = :id', ['id' => $ck['terminal_id']]);
+    $forDocs = [];
+    foreach (Checks::applyList($ck) as $ap) {
+        $forDocs[] = ['no' => (string)DB::value('SELECT txn_no FROM transactions WHERE id = :id', ['id' => $ap['id']]), 'amount' => $ap['amount']];
+    }
+    $ackLines = ['ACKNOWLEDGEMENT RECEIPT', 'POST-DATED CHECK'];
+    layout_start('Post-dated check', ['bare' => true, 'no_title' => true]);
+    ?>
+    <div class="no-print text-center mb-2"><button class="btn btn-primary btn-sm" onclick="window.print()" autofocus><i class="bi bi-printer"></i> Print</button>
+      <a class="btn btn-success btn-sm" href="<?= h(url($pageKey)) ?>">Back to the register</a>
+      <?= Access::page('cust.checks') ? '<a class="btn btn-outline-secondary btn-sm" href="' . h(url('cust.checks', ['a' => 'view', 'id' => $ck['id']])) . '">Customer Checks</a>' : '' ?></div>
+    <div class="receipt">
+      <div class="text-center"><?= Logo::img('doc.pos_receipt', 'receipt-logo') ?><strong><?= h($s['company_name']) ?></strong><br><?= h($s['company_address']) ?><br>VAT REG TIN <?= h($s['company_tin']) ?><br>
+        <?= h($term['name'] ?? '') ?></div>
+      <hr class="my-1">
+      <div class="text-center fw-bold"><?= implode('<br>', array_map('h', $ackLines)) ?></div>
+      <div>No: <?= h(Checks::ackNo((int)$ck['id'])) ?><br>Date: <?= h(fdatetime($ck['created_at'])) ?><br>Customer: <?= h($ck['customer_name']) ?><br>Cashier: <?= h($ck['received_by_name']) ?></div>
+      <hr class="my-1">
+      <table class="w-100">
+        <tr><td>Bank</td><td class="text-end"><?= h($ck['bank']) ?></td></tr>
+        <tr><td>Check number</td><td class="text-end"><?= h($ck['check_no']) ?></td></tr>
+        <tr><td>Check date</td><td class="text-end"><?= h(fdate($ck['check_date'])) ?></td></tr>
+        <tr class="fw-bold"><td>Amount</td><td class="text-end"><?= money($ck['amount']) ?></td></tr>
+        <?php foreach ($forDocs as $fd): ?><tr><td>&nbsp; For <?= h($fd['no']) ?></td><td class="text-end"><?= money($fd['amount']) ?></td></tr><?php endforeach; ?>
+      </table>
+      <hr class="my-1">
+      <div class="text-center small">Received for collection on its date. The payment is credited to the account on <?= h(fdate($ck['check_date'])) ?>, when the check is due.</div>
     </div>
     <?php
     layout_end();
@@ -163,36 +215,16 @@ if (is_post()) {
         }
 
         if ($do === 'payment') {
-            // customer paying an existing balance at the counter
-            $cid = pint('pay_customer_id');
-            $amt = r2(pnum('pay_amount'));
-            $pm = pint('pay_method_id');
-            if (!$cid || $amt <= 0 || !$pm) {
-                fail('Choose the customer, amount and payment method.');
+            // v9: a customer paying an account balance: the invoices ticked, then the payment (a check: its date,
+            // number and bank; a post-dated check is only received, and recorded as payment on its date)
+            $got = PosPayments::receive($terminal, $shift, $base);
+            if ($got['kind'] === 'check') {
+                $ck = Checks::load($got['id']);
+                flash('success', 'Post-dated check received: ' . Checks::describe($ck) . ', ' . money($ck['amount']) . '. It is recorded as payment on ' . fdate($ck['check_date']) . '.');
+                redirect(url($pageKey, ['a' => 'check_receipt', 'id' => $got['id']]));
             }
-            $method = DB::row('SELECT * FROM payment_methods WHERE id = :id', ['id' => $pm]);
-            // cash goes to the drawer; a card or e-wallet payment to the clearing account of its method, or to the module default
-            // Card Clearing / E-wallet Clearing like a POS sale paid that way (v28: it went to Undeposited Funds); others to Undeposited Funds
-            $acct = $method['method_type'] === 'cash' ? (int)$terminal['cash_account_id'] : (int)($method['clearing_account_id']
-                ?: (in_array($method['method_type'], ['card', 'ewallet'], true) ? Accts::get($method['method_type'] === 'ewallet' ? 'ewallet_clearing' : 'card_clearing') : Accts::get('undeposited_funds')));
-            $apps = [];
-            $left = $amt;
-            foreach (Balances::openReceivables($cid) as $d) {
-                if ($left <= 0.004) {
-                    break;
-                }
-                $use = min($left, $d['open_balance']);
-                $apps[] = ['target_txn_id' => $d['id'], 'amount' => $use];
-                $left -= $use;
-            }
-            // array_merge, not "+": the customer paying is the one chosen on this small form, not the sale's customer
-            $id = Txn::save('payment', array_merge($base, [
-                'customer_id' => $cid, 'account_id' => $acct, 'account2_id' => Accts::get('ar'), 'payment_method_id' => $pm,
-                'total' => $amt, 'ref_no' => p('pay_ref') ?: null, 'memo' => 'Payment at ' . $terminal['name'], 'receipt_no' => Pos::nextReceipt((int)$terminal['id']),
-                'payee_name' => null,
-            ]), [], null, ['keep_totals' => true, 'applications' => $apps]);
-            flash('success', 'Payment of ' . money($amt) . ' recorded.');
-            redirect(url($pageKey, ['a' => 'receipt', 'id' => $id]));
+            flash('success', 'Payment of ' . money(pnum('pay_amount')) . ' recorded.');
+            redirect(url($pageKey, ['a' => 'receipt', 'id' => $got['id']]));
         }
 
         if ($do === 'cancel_suspended') {
@@ -594,17 +626,7 @@ if ($fbMode) {
         </div>
       </div>
     </form>
-    <form method="post" class="card mt-3">
-      <?= csrf_field() ?><input type="hidden" name="do" value="payment">
-      <div class="card-header small fw-semibold">Customer paying an account balance</div>
-      <div class="card-body row g-2">
-        <div class="col-12"><select class="form-select form-select-sm" name="pay_customer_id" required><?= options(Lookup::customers(false), null, 'Customer…') ?></select></div>
-        <div class="col-6"><input class="form-control form-control-sm text-end" name="pay_amount" placeholder="Amount" required></div>
-        <div class="col-6"><select class="form-select form-select-sm" name="pay_method_id"><?= options(array_column($methods, 'name', 'id'), null) ?></select></div>
-        <div class="col-8"><input class="form-control form-control-sm" name="pay_ref" placeholder="Reference"></div>
-        <div class="col-4"><button class="btn btn-sm btn-outline-success w-100">Receive</button></div>
-      </div>
-    </form>
+    <?php $apWrap = 'card'; require __DIR__ . '/_account_pay.php'; ?>
   </div>
 </div>
 <script>

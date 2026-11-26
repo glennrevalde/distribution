@@ -496,7 +496,8 @@ final class Txn
         if (abs($used) > 0 && in_array($t['txn_type'], ['sales_order', 'purchase_order', 'estimate'], true)) {
             $out[] = 'It has already been converted or received in part. Close it instead.';
         }
-        return $out;
+        // v9: a payment whose check was returned, and the charge of a returned check, follow the Check Registry
+        return array_merge($out, Checks::blockers($t));
     }
 
     public static function void(int $id, string $reason, ?array $approver = null): void

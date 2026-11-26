@@ -12,6 +12,16 @@ switch ($what) {
             $c['balance'] = Balances::customerBalance((int)$c['id']);
         }
         json_out($c ?: []);
+    case 'open_invoices':
+        // v9: a customer paying an account balance at the POS: the outstanding invoices to tick, oldest due first
+        if (!Access::page('pos.register') && !Access::page('pos.fb') && !Access::page('cust.payments')) {
+            json_out(['docs' => [], 'balance' => 0], 403);
+        }
+        $cid = (int)g('customer');
+        if (!$cid || !DB::value('SELECT 1 FROM customers WHERE id = :id', ['id' => $cid])) {
+            json_out(['docs' => [], 'balance' => 0]);
+        }
+        json_out(PosPayments::openDocs($cid));
     case 'vendor':
         $v = DB::row('SELECT id, address, terms_id, default_expense_account_id, tax_code_id FROM vendors WHERE id = :id', ['id' => (int)g('id')]);
         json_out($v ?: []);

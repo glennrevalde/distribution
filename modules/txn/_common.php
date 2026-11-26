@@ -862,6 +862,13 @@ function render_txn_view(array $t, string $pageKey): void
     if ($t['payment_method_id']) {
         $info['Payment method'] = h(DB::value('SELECT name FROM payment_methods WHERE id = :id', ['id' => $t['payment_method_id']]));
     }
+    // v9: the check a payment was made with, and its status on Customer Checks
+    if ($type === 'payment' && ($chk = Checks::forPayment((int)$t['id']))) {
+        $info['Check'] = h(Checks::describe($chk)) . ', ' . safe_link('cust.checks', ['a' => 'view', 'id' => $chk['id']], Checks::statusText(Checks::status($chk)));
+    }
+    if ($type === 'statement_charge' && Checks::ready() && ($rc = DB::value('SELECT id FROM customer_checks WHERE return_txn_id = :t LIMIT 1', ['t' => $t['id']]))) {
+        $info['Returned check'] = safe_link('cust.checks', ['a' => 'view', 'id' => $rc], Checks::describe(Checks::load((int)$rc)));
+    }
     if ($type === 'inventory_transfer' || $type === 'inventory_dispatch') {
         // v8: a dispatch may come from many sites: each with its marker
         $fromIds = txn_from_sites($t);

@@ -222,6 +222,12 @@ final class Pos
         if ($cashPayments) {
             $tenders['Cash (account payments)'] = $cashPayments;
         }
+        // v9: the other account payments taken at the counter, by payment type (they are not in the cash drawer)
+        foreach (DB::all("SELECT pm.name, SUM(t.total) AS amt FROM transactions t JOIN payment_methods pm ON pm.id = t.payment_method_id
+                           WHERE t.pos_shift_id = :s AND t.txn_type = 'payment' AND t.is_voided = 0 AND pm.method_type <> 'cash'
+                           GROUP BY pm.name ORDER BY pm.name", ['s' => $shiftId]) as $r) {
+            $tenders[$r['name'] . ' (account payments)'] = r2((float)$r['amt']);
+        }
         $charges = (float)DB::value("SELECT COALESCE(SUM(total),0) FROM transactions WHERE pos_shift_id = :s AND txn_type = 'invoice' AND is_voided = 0", ['s' => $shiftId]);
         if ($charges) {
             $tenders['Charged to accounts'] = $charges;
@@ -244,6 +250,8 @@ final class Pos
             'tenders'       => $tenders,
             'cash_drops'    => r2($drops),
             'expected_cash' => r2((float)$shift['opening_float'] + $cashSales + $cashPayments - $drops),
+            // v9: the post-dated checks received in the shift (Receipt of Post Dated Check): not payments yet
+            'pdc'           => Checks::pdcForShift($shiftId),
         ];
     }
 

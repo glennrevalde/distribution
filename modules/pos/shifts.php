@@ -51,6 +51,13 @@ if ($a === 'reading') {
         <tr class="fw-bold"><td>Over / (short)</td><td class="text-end"><?= money($r['over_short']) ?></td></tr>
         <?php endif; ?>
       </table>
+      <?php $rdPdc = Checks::pdcForShift((int)$r['shift_id']); if ($rdPdc): ?>
+      <hr class="my-1"><div class="fw-bold">Receipt of Post Dated Check</div>
+      <table class="w-100">
+        <?php foreach ($rdPdc as $c): ?><tr><td><?= h($c['customer_name']) ?><br>&nbsp; <?= h($c['bank']) ?> no. <?= h($c['check_no']) ?><br>&nbsp; Check date <?= h(fdate($c['check_date'])) ?></td><td class="text-end align-top"><?= money($c['amount']) ?></td></tr><?php endforeach; ?>
+        <tr class="fw-bold"><td>Total (not yet paid)</td><td class="text-end"><?= money(array_sum(array_column($rdPdc, 'amount'))) ?></td></tr>
+      </table>
+      <?php endif; ?>
       <?php if ($r['reading_type'] === 'Z' && $r['corrected_at']): ?><hr class="my-1"><div class="text-center small">Closing entries corrected <?= h(fdatetime($r['corrected_at'])) ?> by <?= h($r['corrected_name']) ?></div><?php endif; ?>
       <hr class="my-1"><div class="text-center"><?= $r['reading_type'] === 'Z' ? 'End of day - counters reset' : 'Mid-shift reading - register not closed' ?></div>
     </div>
@@ -201,6 +208,14 @@ function shift_summary_table(array $summary, ?array $closed = null): string
     if ($closed) {
         $h .= '<tr><td>Cash counted</td><td class="num">' . money($closed['counted_cash']) . '</td></tr>'
             . '<tr class="fw-bold"><td>Over / (short)</td><td class="num ' . ((float)$closed['over_short'] < 0 ? 'neg' : '') . '">' . money($closed['over_short']) . '</td></tr>';
+    }
+    // v9: the post-dated checks received in the shift: not payments yet, and not in the drawer's cash
+    if (!empty($summary['pdc'])) {
+        $h .= '<tr class="shift-pdc-head"><td>Receipt of Post Dated Check (' . count($summary['pdc']) . ')</td><td class="num">' . money(array_sum(array_column($summary['pdc'], 'amount'))) . '</td></tr>';
+        foreach ($summary['pdc'] as $c) {
+            $h .= '<tr class="shift-pdc"><td class="ps-3 small">' . h($c['customer_name']) . '<div class="text-muted">' . h($c['bank']) . ' no. ' . h($c['check_no']) . ', dated ' . h(fdate($c['check_date'])) . '</div></td>'
+                . '<td class="num small">' . money($c['amount']) . '</td></tr>';
+        }
     }
     return $h . '</table>';
 }

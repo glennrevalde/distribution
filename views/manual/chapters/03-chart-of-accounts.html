@@ -1132,15 +1132,15 @@
 <tbody>
 <tr>
 <td>Name</td>
-<td>For example Cash, GCash or Credit/Debit Card.</td>
+<td>For example Cash, GCash or BPI.</td>
 </tr>
 <tr>
 <td>Type</td>
 <td><strong>Cash</strong>, <strong>Check</strong>, <strong>Card</strong>, <strong>E-wallet</strong>, <strong>Bank transfer</strong>, <strong>Gift voucher</strong> or <strong>Other</strong>.</td>
 </tr>
 <tr>
-<td>POS clearing account</td>
-<td>The account a POS tender of this method is debited to, for example 1060 Card Clearing. When it is blank, a POS sale uses the default Card Clearing or E-wallet Clearing account, and a customer payment taken at the counter uses Undeposited Funds. Cash tenders always go to the terminal's cash account.</td>
+<td>G.L. account</td>
+<td>The account debited every time a payment of this type comes in (POS sales, payments at the counter, Receive Payments, Enter Sales Receipts), for example 1020 Cash in Bank - BPI Savings. When it is blank, the default is used: Card Clearing for cards, E-wallet Clearing for e-wallets, Undeposited Funds for the others. Cash tenders always go to the terminal's cash account. Also set on <a href="manual.php?c=point-of-sale#pg-pos-payment_types">Payment Types &amp; G.L. Accounts</a>.</td>
 </tr>
 <tr>
 <td>POS payment option</td>

@@ -6,7 +6,7 @@
 <li><strong>A terminal is a counter.</strong> Each POS terminal (for example POS-01 Makati Counter 1) sells from one inventory site, keeps its cash in one cash account, and numbers its own receipts (MK1-00000001, MK1-00000002 ...). Terminals are set up in <a href="#pg-pos-terminals">POS Terminals</a>.</li>
 <li><strong>A shift belongs to a terminal.</strong> Nothing can be sold until someone opens a shift on the terminal with the opening cash float. Every sale, return and payment taken at the terminal is counted in that shift until the register is closed with the Z-reading. Anyone allowed to use the terminal sells on its open shift.</li>
 <li><strong>Every sale posts at once.</strong> When the cashier completes a sale, it is recorded as a <em>POS Sale</em> dated that day, posted to the ledger and taken out of the site's stock. There is no end-of-day posting to wait for.</li>
-<li><strong>The payment decides the account.</strong> Cash goes to the terminal's cash account. Every other payment goes to the account of its payment method: for cards and e-wallets a clearing account, which is emptied when the provider's settlement is recorded in <a href="manual.php?c=banking#pg-bank-deposits">Make Deposits</a>.</li>
+<li><strong>The payment decides the account.</strong> Cash goes to the terminal's cash account. Every other payment goes to the G.L. account linked to its payment type on <a href="#pg-pos-payment_types">Payment Types &amp; G.L. Accounts</a>: a bank payment type (BPI, Metrobank, EastWest, Gotymebank, BOC) to its bank account, an e-wallet to its clearing account, which is emptied when the provider's settlement is recorded in <a href="manual.php?c=banking#pg-bank-deposits">Make Deposits</a>.</li>
 <li><strong>Sensitive actions need a supervisor.</strong> Voids, returns and refunds, X- and Z-readings, and discounts or price changes beyond the cashier's limits need a second person: a supervisor types their own username and password on the same screen. A user who has the <strong>Approve</strong> permission on the page approves their own action.</li>
 </ul>
 <h3 id="s-a-day-at-the-counter">A day at the counter<a class="man-hash" href="#s-a-day-at-the-counter" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
@@ -30,13 +30,13 @@
 <li><strong>Company settings.</strong> In <a href="manual.php?c=administration#pg-admin-settings">Company, Security &amp; Closing Date</a>: the <strong>POS receipt wording</strong>, the <strong>Bluetooth receipt printer</strong>, and <strong>Default site &amp; class for POS transactions</strong>, which lets a cashier's register open on their own store's counter with their class already chosen.</li>
 <li><strong>Account customers.</strong> A customer who may buy on credit at the counter needs the tick <strong>Approved account customer at the POS</strong> and a <strong>Credit limit (0 = none)</strong> in the <a href="manual.php?c=customers#pg-cust-center">Customer Center</a>. A customer's <strong>Price level</strong> gives them their prices at the register too.</li>
 </ol>
-<p>The payment methods of the demo company, and the account each one debits when a sale is paid with it:</p>
+<p>The payment types of the demo company, and the account each one debits when a sale is paid with it:</p>
 <div class="table-responsive man-table"><table class="table table-sm">
 <thead>
 <tr>
-<th>Payment method</th>
-<th>Type</th>
-<th>Account debited on a sale</th>
+<th>Payment type</th>
+<th>Kind</th>
+<th>Account debited</th>
 </tr>
 </thead>
 <tbody>
@@ -46,35 +46,45 @@
 <td>The terminal's cash account (1001 Cash on Hand - Store Registers)</td>
 </tr>
 <tr>
-<td>Credit/Debit Card</td>
-<td>Card</td>
-<td>1060 Card Clearing</td>
+<td>BPI</td>
+<td>Bank</td>
+<td>1020 Cash in Bank - BPI Savings</td>
 </tr>
 <tr>
-<td>GCash, Maya</td>
+<td>GCash</td>
 <td>E-wallet</td>
 <td>1065 E-wallet Clearing</td>
 </tr>
 <tr>
-<td>Gift Voucher</td>
-<td>Gift voucher</td>
-<td>2120 Gift Vouchers Outstanding</td>
-</tr>
-<tr>
-<td>P.O. Card</td>
-<td>Card</td>
-<td>1070 P.O. Card Clearing</td>
-</tr>
-<tr>
+<td>Metrobank</td>
 <td>Bank</td>
-<td>Bank transfer</td>
-<td>1010 Cash in Bank - BDO Checking</td>
+<td>1025 Cash in Bank - Metrobank</td>
+</tr>
+<tr>
+<td>EastWest</td>
+<td>Bank</td>
+<td>1030 Cash in Bank - EastWest</td>
+</tr>
+<tr>
+<td>Gotymebank</td>
+<td>Bank</td>
+<td>1035 Cash in Bank - GoTyme Bank</td>
+</tr>
+<tr>
+<td>BOC</td>
+<td>Bank</td>
+<td>1040 Cash in Bank - BOC</td>
+</tr>
+<tr>
+<td>Check, Bank Transfer</td>
+<td>Check, Bank</td>
+<td>1050 Undeposited Funds (no account linked; not POS payment options in the demo)</td>
 </tr>
 </tbody>
 </table></div>
-<p>A method without a POS clearing account uses a module default: <strong>E-wallet Clearing</strong> for e-wallets, <strong>Card Clearing</strong> for the others. <a href="manual.php?c=chart-of-accounts#pg-coa-default_accounts">Module Default Accounts</a> also holds <strong>Cash on Hand (Register)</strong>, the account a new terminal starts with, and <strong>Cash Over and Short</strong>. Check and Bank Transfer are not POS payment options in the demo.</p>
+<p>Each payment type is linked to its account on <a href="#pg-pos-payment_types">Payment Types &amp; G.L. Accounts</a>. A type with no account uses a module default: <strong>E-wallet Clearing</strong> for e-wallets, <strong>Card Clearing</strong> for cards, <strong>Undeposited Funds</strong> for checks, banks and the rest. <a href="manual.php?c=chart-of-accounts#pg-coa-default_accounts">Module Default Accounts</a> also holds <strong>Cash on Hand (Register)</strong>, the account a new terminal starts with, and <strong>Cash Over and Short</strong>.</p>
 <div class="man-callout man-note"><div class="man-callout-t"><i class="bi bi-info-circle"></i>Note</div><p>Selling at the POS and depositing the cash are duties that should be kept apart. When a role or user gets both <strong>POS Register</strong> and <strong>Make Deposits</strong> with create or edit rights, the program warns and asks you to tick a box to save anyway.</p></div>
-<p>The sidebar menu <strong>Point of Sale</strong> has <strong>Transactions</strong> (POS Register; Shifts, Cash Drops &amp; Readings; POS Receipts, Returns &amp; Voids), <strong>Setup</strong> (POS Terminals) and <strong>Reports</strong>. The transaction pages you may create are also on the <strong>Quick actions</strong> box of the Home dashboard.</p>
+<p>The sidebar menu <strong>Point of Sale</strong> has <strong>Transactions</strong> (POS Register; Shifts, Cash Drops &amp; Readings; POS Receipts, Returns &amp; Voids), <strong>Setup</strong> (POS Terminals, Payment Types &amp; G.L. Accounts) and <strong>Reports</strong>. The transaction pages you may create are also on the <strong>Quick actions</strong> box of the Home dashboard.</p>
 <h2 id="pg-pos-register">POS Register<a class="man-hash" href="#pg-pos-register" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
 <p>The POS Register is the selling screen. The cashier puts the items in the cart, chooses the customer, takes the payment and completes the sale; the receipt opens at once. From the same screen the cashier can suspend a sale and recall it, charge an approved account customer, and take a payment on a customer's account balance.</p>
 <p><strong>Where to find it:</strong> Point of Sale &gt; POS Register. Also the <strong>Go to register</strong> button of the shifts page, the <strong>Register</strong> button of POS Receipts, and the Home dashboard <strong>Quick actions</strong>.</p>
@@ -175,11 +185,11 @@
 </tr>
 <tr>
 <td>Payment boxes</td>
-<td>One box for each POS payment option (<strong>Cash</strong>, <strong>Credit/Debit Card</strong>, <strong>GCash</strong>, <strong>Maya</strong>, <strong>Gift Voucher</strong>, <strong>P.O. Card</strong>, <strong>Bank</strong> in the demo). Type the amount paid with each.</td>
+<td>One box for each POS payment option (<strong>Cash</strong>, <strong>BPI</strong>, <strong>GCash</strong>, <strong>Metrobank</strong>, <strong>EastWest</strong>, <strong>Gotymebank</strong>, <strong>BOC</strong> in the demo). Type the amount paid with each.</td>
 </tr>
 <tr>
 <td><strong>Ref / approval no.</strong></td>
-<td>Beside each non-cash box: the card approval code, e-wallet reference or voucher number. It is printed on the receipt.</td>
+<td>Beside each non-cash box: the bank transfer or deposit reference, or the e-wallet reference. It is printed on the receipt.</td>
 </tr>
 <tr>
 <td><strong>Change</strong></td>
@@ -254,7 +264,7 @@
 <h4 id="s-step-by-step-take-a-card-e-wallet-or-split-payment">Step by step: take a card, e-wallet or split payment<a class="man-hash" href="#s-step-by-step-take-a-card-e-wallet-or-split-payment" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <ol>
 <li>Put the items in the cart.</li>
-<li>Type the amount paid by card, GCash, Maya, voucher, P.O. card or bank in its box, and the reference or approval number beside it.</li>
+<li>Type the amount paid through a bank (BPI, Metrobank, EastWest, Gotymebank, BOC) or GCash in its box, and the reference number beside it.</li>
 <li>If the customer pays the rest in cash, type the cash handed over in <strong>Cash</strong>.</li>
 <li>Check that <strong>Balance due</strong> is 0.00 and tap <strong>Complete sale</strong>.</li>
 </ol>
@@ -291,11 +301,20 @@
 <p>The program refuses with "Choose the account customer to charge." when no customer is chosen, "... is not an approved account customer for charges at the counter." when the customer is not ticked <strong>Approved account customer at the POS</strong>, and "This charge would exceed the customer's credit limit of ₱...." unless you have <strong>Can exceed customer credit limits</strong>.</p>
 <h4 id="s-step-by-step-take-a-payment-on-an-account-balance">Step by step: take a payment on an account balance<a class="man-hash" href="#s-step-by-step-take-a-payment-on-an-account-balance" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <ol>
-<li>In the box <strong>Customer paying an account balance</strong>, pick the customer.</li>
-<li>Type the <strong>Amount</strong>, choose the payment method and type the <strong>Reference</strong>.</li>
-<li>Tap <strong>Receive</strong>. The message "Payment of ₱... recorded." appears and a receipt titled <strong>ACKNOWLEDGEMENT RECEIPT</strong> opens.</li>
+<li>In the box <strong>Customer paying an account balance</strong>, choose the customer (type part of the name).</li>
+<li>The customer's <strong>Outstanding invoices</strong> appear, earliest due date first, each with its number, kind, date, due date (in red when overdue) and open balance, and the customer's <strong>Balance</strong> above them. Tick the invoices being paid, or <strong>Pay all of them</strong>. An invoice a post-dated check is already meant for says so under it.</li>
+<li>The <strong>Payment</strong> details appear once an invoice is ticked. <strong>Amount</strong> starts at the open balance of the invoices ticked; type over it when the customer pays less (the invoices are paid oldest first and the note says which is paid in part) or more (the rest is kept as a credit).</li>
+<li>Choose the <strong>Payment type</strong> and type the <strong>Reference</strong>. For a check, type its <strong>Check date</strong>, <strong>Check number</strong> and <strong>Bank</strong> instead (<a href="#s-checks-at-the-counter">Checks at the counter</a>).</li>
+<li>Tap <strong>Receive payment</strong>. The message "Payment of ₱... recorded." appears and a receipt titled <strong>ACKNOWLEDGEMENT RECEIPT</strong> opens, showing how it was paid and each invoice it was applied to.</li>
 </ol>
-<p>The payment is applied to the customer's open invoices, earliest due date first. Any amount left over stays on the customer's account as an unapplied credit. Cash taken this way counts in the shift's expected cash.</p>
+<figure class="man-fig man-fig-narrow"><a class="man-zoom" href="assets/manual/img/pos_account_pay.jpg" title="Click to enlarge"><img src="assets/manual/img/pos_account_pay.jpg" alt="Two invoices ticked, paid with a post-dated check" width="338" height="834" loading="lazy" decoding="async"></a><figcaption>Two invoices ticked, paid with a post-dated check</figcaption></figure>
+<p>A customer with no outstanding invoices can still pay: the payment is kept as a credit on their account. The payment goes to the account linked to its payment type; cash taken this way counts in the shift's expected cash, and the other payment types are listed on the shift's figures as <strong>(account payments)</strong>.</p>
+<p>Messages: "Choose the customer paying.", "Tick the invoices being paid.", "Enter the amount received.", "Choose the payment type." and "One of the invoices ticked is no longer open for this customer. Choose the customer again."</p>
+<h4 id="s-checks-at-the-counter">Checks at the counter<a class="man-hash" href="#s-checks-at-the-counter" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
+<p>A payment type of the kind <strong>Check</strong> asks for the <strong>Check date</strong>, the <strong>Check number</strong> and the <strong>Bank</strong> the check is drawn on (type it, or pick one of the banks offered). The amount of the check is the <strong>Amount</strong>.</p>
+<ul><li><strong>Dated today or earlier:</strong> it is a payment at once, recorded and posted like any other, and the check is kept with it on <a href="manual.php?c=customers#pg-cust-checks">Customer Checks</a> as <strong>On Date</strong>.</li><li><strong>Post-dated</strong> (dated after today): it is not a payment yet. A note says so and the button reads <strong>Receive post-dated check</strong>. Only the receipt of the check is kept: nothing goes to the books, the invoices stay open, and an <strong>ACKNOWLEDGEMENT RECEIPT, POST-DATED CHECK</strong> (numbered PDC-000001 ...) opens with the bank, check number, check date, amount and the invoices it is for. The check is on the cashier's shift as <strong>Receipt of Post Dated Check</strong> with its details, and on Customer Checks as <strong>Pending</strong>. On the check's date the payment is recorded, dated the check's date, applied to the invoices ticked (as far as they are still open), and its journal entries are made.</li></ul>
+<figure class="man-fig man-fig-narrow"><a class="man-zoom" href="assets/manual/img/pos_pdc_ack.jpg" title="Click to enlarge"><img src="assets/manual/img/pos_pdc_ack.jpg" alt="The acknowledgement of a post-dated check" width="320" height="464" loading="lazy" decoding="async"></a><figcaption>The acknowledgement of a post-dated check</figcaption></figure>
+<div class="man-callout man-note"><div class="man-callout-t"><i class="bi bi-info-circle"></i>When the check date comes</div><p>The payment of a post-dated check is recorded the first time anyone opens the system on or after the check date (or from Customer Checks). It is the cashier's who took the check, and it does not change the cash of the shift the check was received in.</p></div>
 <h4 id="s-selling-an-item-group">Selling an item group<a class="man-hash" href="#s-selling-an-item-group" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <p>Item groups (for example GRP-WFH Work-from-Home Bundle) are offered on the register like any item: type part of the group's code or name and pick it. The group goes into the cart on one line at its <strong>Group price</strong> (the customer's price level applies), or at the sum of the prices of its items when <strong>Adopt the Group Price in the Item Group</strong> is cleared or the group has no group price. Change the quantity or give a discount on the line as usual. When the sale is completed, the group's items leave the store's stock and are recorded at their own prices, and the difference from the group price goes to the group's price variance account, as on an invoice (see <a href="manual.php?c=customers#sec-item-group-sales">Item groups on sales documents</a>).</p>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/pos_register__group_search.jpg" title="Click to enlarge"><img src="assets/manual/img/pos_register__group_search.jpg" alt="An item group found by typing part of its name" width="1100" height="724" loading="lazy" decoding="async"></a><figcaption>An item group found by typing part of its name</figcaption></figure>
@@ -533,7 +552,7 @@
 </tr>
 <tr>
 <td>Payment lines</td>
-<td>The amount taken by each payment method (returns deducted); also <strong>Cash (account payments)</strong> and <strong>Charged to accounts</strong> when there are any.</td>
+<td>The amount taken by each payment method (returns deducted); also <strong>Cash (account payments)</strong>, the other account payments by payment type (for example <strong>Check (account payments)</strong>) and <strong>Charged to accounts</strong> when there are any.</td>
 </tr>
 <tr>
 <td><strong>Cash drops</strong></td>
@@ -585,7 +604,7 @@
 <figure class="man-fig man-fig-narrow"><a class="man-zoom" href="assets/manual/img/pos_shifts__cash_counted.jpg" title="Click to enlarge"><img src="assets/manual/img/pos_shifts__cash_counted.jpg" alt="The total of the sheet in Cash counted in drawer, ready to close the register" width="427" height="456" loading="lazy" decoding="async"></a><figcaption>The total of the sheet in Cash counted in drawer, ready to close the register</figcaption></figure>
 <p>When the register is closed, the quantities are kept with the shift. They are printed on the <a href="#pg-rpt-pos_cash_count">Cash Count Sheet</a> report, and the shift's page and the list of recent shifts have a <strong>Cash count sheet</strong> link (the bills icon). When the closing entries are corrected, the sheet can be filled in again with the bills button next to <strong>Cash counted</strong>; it then replaces the one kept.</p>
 <h4 id="s-the-reading">The reading<a class="man-hash" href="#s-the-reading" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
-<p>An X-reading or Z-reading shows the company, TIN and terminal; <strong>X-READING</strong> or <strong>Z-READING #n</strong> (Z numbers run per terminal); the <strong>Business date</strong>, when it was <strong>Printed</strong> and <strong>By</strong> whom; <strong>First receipt</strong>, <strong>Last receipt</strong>, <strong>Sales count</strong>, <strong>Gross sales</strong>, <strong>Discounts</strong>, <strong>Returns</strong>, <strong>Voids</strong>, <strong>Net sales (net of VAT)</strong> and <strong>VAT</strong>; <strong>Opening cash float</strong>, the amount of each payment method, <strong>Cash drops</strong> and <strong>Expected cash in drawer</strong>. A Z-reading adds <strong>Counted cash</strong> and <strong>Over / (short)</strong>, and ends with "End of day - counters reset"; an X-reading ends with "Mid-shift reading - register not closed". <strong>Print</strong> prints it and <strong>Back</strong> returns to the shifts page. All readings are listed in the <a href="#pg-rpt-pos_readings">X- and Z-Reading Summary</a>.</p>
+<p>An X-reading or Z-reading shows the company, TIN and terminal; <strong>X-READING</strong> or <strong>Z-READING #n</strong> (Z numbers run per terminal); the <strong>Business date</strong>, when it was <strong>Printed</strong> and <strong>By</strong> whom; <strong>First receipt</strong>, <strong>Last receipt</strong>, <strong>Sales count</strong>, <strong>Gross sales</strong>, <strong>Discounts</strong>, <strong>Returns</strong>, <strong>Voids</strong>, <strong>Net sales (net of VAT)</strong> and <strong>VAT</strong>; <strong>Opening cash float</strong>, the amount of each payment method, <strong>Cash drops</strong> and <strong>Expected cash in drawer</strong>; and, when post-dated checks were received in the shift, <strong>Receipt of Post Dated Check</strong> with each check's customer, bank, number, check date and amount, and their total (not yet paid). A Z-reading adds <strong>Counted cash</strong> and <strong>Over / (short)</strong>, and ends with "End of day - counters reset"; an X-reading ends with "Mid-shift reading - register not closed". <strong>Print</strong> prints it and <strong>Back</strong> returns to the shifts page. All readings are listed in the <a href="#pg-rpt-pos_readings">X- and Z-Reading Summary</a>.</p>
 <h4 id="s-recent-shifts-and-earlier-ones">Recent shifts, and earlier ones<a class="man-hash" href="#s-recent-shifts-and-earlier-ones" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h4>
 <p>The table on the right lists the latest 30 shifts: <strong>Date</strong>, <strong>Terminal</strong>, <strong>Cashier</strong> (who opened it), <strong>Status</strong> (with "corrected" under it when the closing entries were corrected), <strong>Float</strong> (the opening cash float), <strong>Expected</strong>, <strong>Counted</strong> and <strong>Over/short</strong>. <strong>Correct</strong> (or <strong>Details</strong>) opens the shift, <strong>Z</strong> opens its Z-reading, and <strong>deposited</strong> opens the deposit that took its cash to the bank.</p>
 <p>To see the shifts of earlier days, use the boxes above the table:</p>
@@ -676,6 +695,9 @@
 <li>"After this correction nothing is left to deposit from the shift (counted cash less the float plus the drops), but deposit DEP-... holds ... for it. Take the shift off the deposit first (Edit on the deposit), then correct the shift."</li>
 <li>The page works on the terminal chosen on the register. To work on another counter, choose it in the register's terminal drop-down first.</li>
 </ul>
+<h3 id="s-receipt-of-post-dated-check">Receipt of Post Dated Check<a class="man-hash" href="#s-receipt-of-post-dated-check" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
+<p>The post-dated checks a cashier received at the counter are listed under the shift's figures as <strong>Receipt of Post Dated Check</strong>, with the number of checks and their total, and under it each check's customer, bank, number and date. They are not payments yet: they are not in the expected cash or in the tenders, and they are recorded as payments on their dates.</p>
+<figure class="man-fig man-fig-narrow"><a class="man-zoom" href="assets/manual/img/pos_shift_pdc.jpg" title="Click to enlarge"><img src="assets/manual/img/pos_shift_pdc.jpg" alt="The shift with a post-dated check received" width="395" height="642" loading="lazy" decoding="async"></a><figcaption>The shift with a post-dated check received</figcaption></figure>
 <h2 id="pg-pos-receipts">POS Receipts, Returns &amp; Voids<a class="man-hash" href="#pg-pos-receipts" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
 <p>This page lists the POS sales and returns. From it you reprint a receipt, take goods back and refund the customer, or open a sale to void it.</p>
 <p><strong>Where to find it:</strong> Point of Sale &gt; POS Receipts, Returns &amp; Voids. Also the <strong>Receipts / returns</strong> button of the register, and the Home dashboard <strong>Quick actions</strong>.</p>
@@ -959,6 +981,42 @@
 <li>A user limited to some sites (see <a href="manual.php?c=administration#pg-admin-users">User Accounts</a>) sees only the terminals at those sites.</li>
 <li>Terminals cannot be deleted; untick <strong>Active</strong> instead.</li>
 </ul>
+<h2 id="pg-pos-payment_types">Payment Types &amp; G.L. Accounts<a class="man-hash" href="#pg-pos-payment_types" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
+<p>Every payment type (Cash, Check, BPI, Metrobank, EastWest, Gotymebank, BOC, GCash ...) with the General Ledger account it is linked to. The account is debited every time a payment of that type comes in: sales on the POS Register and the FB POS (a return credits it), customers paying an account balance at the counter, Receive Payments and Enter Sales Receipts.</p>
+<p><strong>Where to find it:</strong> Point of Sale &gt; Setup &gt; Payment Types &amp; G.L. Accounts.</p>
+<figure class="man-fig"><a class="man-zoom" href="assets/manual/img/pos_payment_types.jpg" title="Click to enlarge"><img src="assets/manual/img/pos_payment_types.jpg" alt="Payment Types & G.L. Accounts: each bank linked to its own bank account" width="1094" height="900" loading="lazy" decoding="async"></a><figcaption>Payment Types & G.L. Accounts: each bank linked to its own bank account</figcaption></figure>
+<div class="table-responsive man-table"><table class="table table-sm">
+<thead>
+<tr>
+<th>Column</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Payment type</strong></td>
+<td>The name shown on the register, on the payment forms and on the receipt. Under it, how many times it was used.</td>
+</tr>
+<tr>
+<td><strong>Kind</strong></td>
+<td><strong>Cash</strong>, <strong>Check</strong>, <strong>Bank</strong>, <strong>Card</strong>, <strong>E-wallet</strong>, <strong>Gift voucher</strong> or <strong>Other</strong>. A Check asks for the check date, number and bank.</td>
+</tr>
+<tr>
+<td><strong>G.L. account debited</strong></td>
+<td>Choose the account from the Chart of Accounts (type part of its code or name). Left empty, the module default is used and named under the box; <em>Not linked</em> marks a type that should have one.</td>
+</tr>
+<tr>
+<td><strong>On the POS</strong></td>
+<td>Offered as a payment box on the POS Register.</td>
+</tr>
+<tr>
+<td><strong>Active</strong></td>
+<td>An inactive type is not offered anywhere; its past payments keep its name.</td>
+</tr>
+</tbody>
+</table></div>
+<ol><li>Change the names, kinds, accounts and switches you need; to add a payment type, fill in the last row (for example <em>Security Bank</em>, kind Bank, its bank account).</li><li>Click <strong>Save payment types</strong>. Each change is recorded in the audit trail with the account chosen.</li></ol>
+<ul><li>On <strong>Receive Payments</strong> and <strong>Enter Sales Receipts</strong>, choosing a payment type with an account sets <strong>Deposit to</strong> to that account and locks it, so a BPI payment always goes to the BPI account.</li><li>Cash at the counter always goes to the terminal's cash drawer account (<a href="#pg-pos-terminals">POS Terminals</a>), so the drawer count stays right. An account chosen for Cash is used on the other forms.</li><li>A change applies to payments received from then on. A sale already recorded keeps the account it went to, even when it is posted again later.</li><li>Messages: "Every payment type needs a name.", "Two payment types are named …. Give each its own name." and "Keep one active Cash payment type: the POS Register takes cash, and gives change, with it."</li><li>As delivered, the Accountant may change it; the POS Supervisor and the Auditor may look at it. The same accounts can also be set in <a href="manual.php?c=chart-of-accounts#pg-coa-lists">Terms, Tax Codes &amp; Other Lists</a> &gt; Payment methods.</li></ul>
 <h2 id="pg-pos-fb_menu">FB POS Menu &amp; Groups<a class="man-hash" href="#pg-pos-fb_menu" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h2>
 <p>Here you set up what the <a href="#pg-pos-fb">FB POS</a> shows: the menu groups (its tabs) and which items appear, under which group and in which order.</p>
 <p><strong>Where to find it:</strong> Point of Sale &gt; FB POS Menu &amp; Groups (under Setup). Also the <strong>Menu &amp; groups</strong> button of the FB POS and of the FB POS part of the item form. The roles that may open POS Terminals may open it, with the same rights.</p>
@@ -999,10 +1057,10 @@
 <p>The report can also be narrowed by <strong>Category</strong>, <strong>Item type</strong> and <strong>Preferred supplier</strong> (see <a href="manual.php?c=home-and-reports#sec-related-filters">Filters on related records</a>).</p>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/rpt_pos_sales_category__report.jpg" title="Click to enlarge"><img src="assets/manual/img/rpt_pos_sales_category__report.jpg" alt="POS Sales by Category for today, with Accessories and Bundles" width="1094" height="603" loading="lazy" decoding="async"></a><figcaption>POS Sales by Category for today, with Accessories and Bundles</figcaption></figure>
 <h3 id="pg-rpt-pos_sales_cashier">POS Sales by Cashier &amp; Payment Method<a class="man-hash" href="#pg-rpt-pos_sales_cashier" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
-<p>One report for two questions: how much each cashier sold, and how the money came in. Each cashier has a heading line with their sales figures, and under it one line per payment method they took, so a cashier's cash, card, GCash and Maya totals can be matched with the drawer and the providers' reports.</p>
+<p>One report for two questions: how much each cashier sold, and how the money came in. Each cashier has a heading line with their sales figures, and under it one line per payment method they took, so a cashier's cash, bank, and GCash totals can be matched with the drawer and the banks' and providers' reports.</p>
 <p><strong>Where to find it:</strong> Point of Sale &gt; Reports &gt; POS Sales by Cashier &amp; Payment Method.</p>
 <figure class="man-fig"><a class="man-zoom" href="assets/manual/img/rpt_pos_sales_cashier__report.jpg" title="Click to enlarge"><img src="assets/manual/img/rpt_pos_sales_cashier__report.jpg" alt="POS Sales by Cashier &amp; Payment Method for today: a cashier&#x27;s line with the payment methods under it" width="1094" height="683" loading="lazy" decoding="async"></a><figcaption>POS Sales by Cashier &amp; Payment Method for today: a cashier&#x27;s line with the payment methods under it</figcaption></figure>
-<p>Filters: <strong>Dates</strong> (default <strong>Today</strong>), <strong>Site</strong>, <strong>Terminal</strong> and <strong>Cashier</strong>. The cashier's line shows <strong>Receipts</strong>, <strong>Qty</strong>, <strong>Discounts</strong>, <strong>Net sales (ex VAT)</strong>, <strong>Cost</strong>, <strong>Margin</strong>, <strong>Voids</strong> (how many of their sales were voided in the period) and <strong>Tendered (incl. VAT)</strong>, the money they took in. Each payment line under it shows the method's name, its <strong>Type</strong> (Cash, Card, E-wallet, Bank transfer, Gift voucher, Check or Other), the number of <strong>Receipts</strong> it was used on and the amount <strong>Tendered (incl. VAT)</strong>. Sales charged to a customer's account are on the line <strong>Charged to customer accounts</strong> (type <strong>On account</strong>). Refunds are deducted from the method chosen for the refund. When more than one cashier sold, a last group, <strong>All cashiers, by payment method</strong>, adds the same payment lines up for the whole counter, and the <strong>TOTAL</strong> line closes the report.</p>
+<p>Filters: <strong>Dates</strong> (default <strong>Today</strong>), <strong>Site</strong>, <strong>Terminal</strong> and <strong>Cashier</strong>. The cashier's line shows <strong>Receipts</strong>, <strong>Qty</strong>, <strong>Discounts</strong>, <strong>Net sales (ex VAT)</strong>, <strong>Cost</strong>, <strong>Margin</strong>, <strong>Voids</strong> (how many of their sales were voided in the period) and <strong>Tendered (incl. VAT)</strong>, the money they took in. Each payment line under it shows the method's name, its <strong>Type</strong> (Cash, Card, E-wallet, Bank transfer, Gift voucher, Check or Other), the number of <strong>Receipts</strong> it was used on and the amount <strong>Tendered (incl. VAT)</strong>. Sales charged to a customer's account are on the line <strong>Charged to customer accounts</strong> (type <strong>On account</strong>). Refunds are deducted from the method chosen for the refund. Customers paying an account balance at the counter are on lines of the type <strong>Account payment</strong>, one for each payment type, and the post-dated checks the cashier received on the line <strong>Receipt of Post Dated Check</strong> (type <strong>Not yet paid</strong>) with each check under it: customer, bank, number and date. Neither is in the cashier's <strong>Tendered</strong> sales. When more than one cashier sold, a last group, <strong>All cashiers, by payment method</strong>, adds the same payment lines up for the whole counter, and the <strong>TOTAL</strong> line closes the report.</p>
 <div class="man-callout man-tip"><div class="man-callout-t"><i class="bi bi-lightbulb"></i>Tip</div><p>Compare a cashier's voids with the others'. Many voids from one cashier are worth a look in the <a href="#pg-rpt-pos_void_log">POS Void and Refund Log</a>. To match a till, read the <strong>Tendered</strong> figure of the cashier's Cash line against the cash counted at the Z-reading.</p></div>
 <h3 id="pg-rpt-pos_sales_hour">POS Sales by Hour<a class="man-hash" href="#pg-rpt-pos_sales_hour" aria-label="Link to this section"><i class="bi bi-link-45deg"></i></a></h3>
 <p>Net sales for each hour of the day, with a bar chart. Use it to plan staff for the busy hours.</p>

@@ -281,7 +281,8 @@ handle_post(function () use ($t, $docType, $pageKey, $isSalesDoc, $type) {
         }
         if ($docType === 'sales_receipt') {
             $h['payment_method_id'] = pint('payment_method_id');
-            $h['account_id'] = pint('account_id') ?: Accts::get('undeposited_funds');
+            // v9: a payment type linked to a G.L. account always goes to it (Point of Sale > Payment Types & G.L. Accounts)
+            $h['account_id'] = PayTypes::depositAccount($h['payment_method_id'], pint('account_id'));
         }
         if ($docType === 'estimate') {
             $st = p('status');
@@ -531,8 +532,33 @@ if ($source && !is_post()) {
     <?= select_field('site_id', 'Inventory site', Lookup::sites(), fv('site_id', $rec, $source['site_id'] ?? $defaultSite), ['class' => 'col-md-2']) ?>
   <?php endif; ?>
   <?php if ($docType === 'sales_receipt'): ?>
-    <?= select_field('payment_method_id', 'Payment method', Lookup::paymentMethods(), fv('payment_method_id', $rec, $custInfo['payment_method_id'] ?? ''), ['blank' => '', 'class' => 'col-md-2']) ?>
-    <?= select_field('account_id', 'Deposit to', Accts::depositTo(), fv('account_id', $rec, Accts::get('undeposited_funds')), ['class' => 'col-md-3']) ?>
+    <?= select_field('payment_method_id', 'Payment method', Lookup::paymentMethods(), fv('payment_method_id', $rec, $custInfo['payment_method_id'] ?? ''), ['blank' => '', 'class' => 'col-md-2', 'extra' => 'id="srMethod"']) ?>
+    <div class="col-md-3"><label class="form-label" for="srDeposit">Deposit to</label>
+      <select class="form-select form-select-sm" name="account_id" id="srDeposit"><?= options(Accts::depositTo(), fv('account_id', $rec, Accts::get('undeposited_funds'))) ?></select>
+      <div class="pay-gl-note" id="srGlNote" hidden></div></div>
+    <script>
+    // v9: a payment type linked to a G.L. account fixes Deposit to (Point of Sale > Payment Types & G.L. Accounts)
+    (function () {
+      const types = <?= json_encode((object)PayTypes::forJs()) ?>;
+      const m = document.getElementById('srMethod'), d = document.getElementById('srDeposit'), note = document.getElementById('srGlNote');
+      if (!m || !d) return;
+      let chosen = d.value;
+      d.addEventListener('change', () => { if (!d.disabled) chosen = d.value; });
+      const apply = () => {
+        const t = types[m.value] || null;
+        if (t && t.gl) {
+          if (!d.disabled) chosen = d.value;
+          if (![...d.options].some((o) => o.value === String(t.gl))) { const o = document.createElement('option'); o.value = String(t.gl); o.textContent = t.gl_name; d.appendChild(o); }
+          d.value = String(t.gl); d.disabled = true; note.hidden = false; note.textContent = t.name + ' is linked to this account.';
+        } else { d.disabled = false; if (d.value !== chosen) d.value = chosen; note.hidden = true; }
+        d.dispatchEvent(new Event('change'));
+        if (d.comboSync) d.comboSync();
+      };
+      m.addEventListener('change', apply);
+      document.addEventListener('DOMContentLoaded', apply);
+      apply();
+    })();
+    </script>
   <?php endif; ?>
   <?php if (in_array($docType, ['invoice', 'sales_receipt'], true)): ?>
     <?= check_field('is_pending', 'Pending (non-posting until marked final)', fv('is_pending', g('finalize') ? ['is_pending' => 0] : $t, 0), 'col-md-3') ?>

@@ -466,11 +466,27 @@ final class Posting
         $header(r2($total));
     }
 
+    /** v9: whether pos_tenders keeps the account each tender was posted to (the 2027_05_03 migration) */
+    private static function tenderAccountReady(): bool
+    {
+        static $ready = null;
+        if ($ready === null) {
+            try {
+                DB::value('SELECT COUNT(account_id) FROM pos_tenders WHERE 1 = 0');
+                $ready = true;
+            } catch (Throwable $e) {
+                $ready = false;
+            }
+        }
+        return $ready;
+    }
+
     /** POS tenders: $sign 1 = money in (sale), -1 = money out (refund) */
     private function tenders(float $total, int $sign): void
     {
+        $keep = self::tenderAccountReady();
         $tenders = DB::all(
-            'SELECT pt.amount, pm.method_type, pm.clearing_account_id FROM pos_tenders pt
+            'SELECT pt.id, pt.amount, pt.payment_method_id, pm.method_type' . ($keep ? ', pt.account_id' : '') . ' FROM pos_tenders pt
                JOIN payment_methods pm ON pm.id = pt.payment_method_id WHERE pt.txn_id = :t',
             ['t' => $this->t['id']]
         );
@@ -479,8 +495,16 @@ final class Posting
         foreach ($tenders as $tn) {
             if ($tn['method_type'] === 'cash') {
                 $acct = $cashAcct;
+            } elseif (!empty($tn['account_id'])) {
+                // v9: the account the tender went to when it was first posted
+                $acct = (int)$tn['account_id'];
             } else {
-                $acct = (int)($tn['clearing_account_id'] ?: Accts::get($tn['method_type'] === 'ewallet' ? 'ewallet_clearing' : 'card_clearing'));
+                // v9: the G.L. account linked to the payment type (Point of Sale > Payment Types & G.L. Accounts),
+                // else Card Clearing, E-wallet Clearing or Undeposited Funds; kept with the tender from now on
+                $acct = PayTypes::account((int)$tn['payment_method_id'], $cashAcct, true);
+                if ($keep) {
+                    DB::update('pos_tenders', ['account_id' => $acct], 'id = :id', ['id' => $tn['id']]);
+                }
             }
             $this->add($acct, $sign * (float)$tn['amount'], ['customer_id' => null]);
             $sum += (float)$tn['amount'];

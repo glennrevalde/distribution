@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 final class Schema
 {
-    private const FLAG = 'schema_ok_2027_03_08';
+    private const FLAG = 'schema_ok_2027_05_03';
 
     /**
      * file => one cheap probe.
@@ -151,6 +151,11 @@ final class Schema
         // distribution v8: Dispatch Inventory from many sites, and the Transfer Reports
         'database/migrations/2027_04_19_transfer_reports.sql' =>
             ['SELECT COUNT(*) FROM pages WHERE page_key IN (\'rpt.transfer_item\', \'rpt.transfer_site\')', 2],
+        // distribution v9: the bank payment types and their G.L. accounts, customer checks and the Check Registry
+        'database/migrations/2027_05_03_payment_types_checks.sql' =>
+            ['SELECT (SELECT COUNT(*) FROM pages WHERE page_key IN (\'pos.payment_types\', \'cust.checks\', \'rpt.check_registry\', \'rpt.cashier_collections\'))
+                   + (SELECT COUNT(*) FROM customer_checks WHERE 1 = 0)
+                   + (SELECT COUNT(account_id) FROM pos_tenders WHERE 1 = 0)', 4],
     ];
 
     private static ?array $pending = null;

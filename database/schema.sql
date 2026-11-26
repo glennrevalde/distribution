@@ -1259,6 +1259,7 @@ CREATE TABLE pos_tenders (
   payment_method_id INT UNSIGNED NOT NULL,
   amount            DECIMAL(15,2) NOT NULL,     -- net amount applied to the sale (after change)
   reference         VARCHAR(60)  NULL,
+  account_id        INT UNSIGNED NULL,          -- v9: the G.L. account the tender was posted to (kept when re-posted)
   KEY ix_pt_txn (txn_id),
   CONSTRAINT fk_pt_txn FOREIGN KEY (txn_id) REFERENCES transactions(id) ON DELETE CASCADE,
   CONSTRAINT fk_pt_pm  FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id)
@@ -2133,6 +2134,44 @@ CREATE TABLE transfer_closing_lines (
   KEY ix_tcl_item (item_id),
   KEY ix_tcl_crate (crate_id),
   CONSTRAINT fk_tcl_closing FOREIGN KEY (closing_id) REFERENCES transfer_closings(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- v9: the checks customers pay with (POS account payments, Receive Payments): the Check Registry.
+-- A post-dated check is kept here only (status pending, no payment) until its date: then its payment is recorded.
+DROP TABLE IF EXISTS customer_checks;
+CREATE TABLE customer_checks (
+  id                INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  customer_id       INT UNSIGNED NOT NULL,
+  payment_txn_id    BIGINT UNSIGNED NULL,                  -- the payment (NULL while post-dated)
+  source            VARCHAR(10)  NOT NULL DEFAULT 'payment', -- pos, payment (Receive Payments)
+  terminal_id       INT UNSIGNED NULL,
+  pos_shift_id      INT UNSIGNED NULL,                     -- the shift it was received in (Receipt of Post Dated Check)
+  site_id           INT UNSIGNED NULL,
+  bank              VARCHAR(80)  NOT NULL,
+  check_no          VARCHAR(40)  NOT NULL,
+  check_date        DATE         NOT NULL,
+  amount            DECIMAL(15,2) NOT NULL DEFAULT 0,
+  received_date     DATE         NOT NULL,
+  status            VARCHAR(12)  NOT NULL DEFAULT 'pending', -- pending, on_date, cleared, returned
+  payment_method_id INT UNSIGNED NULL,
+  account_id        INT UNSIGNED NULL,                     -- the account the payment goes to
+  class_id          INT UNSIGNED NULL,
+  memo              VARCHAR(255) NULL,
+  apply_json        TEXT         NULL,                     -- post-dated: the invoices it pays [{"id":..,"amount":..}]
+  recorded_at       DATETIME     NULL,
+  cleared_date      DATE         NULL,
+  returned_date     DATE         NULL,
+  return_txn_id     BIGINT UNSIGNED NULL,                  -- the statement charge of a returned check
+  status_note       VARCHAR(255) NULL,
+  status_by         INT UNSIGNED NULL,
+  created_by        INT UNSIGNED NULL,
+  created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_cc_customer (customer_id),
+  KEY ix_cc_payment (payment_txn_id),
+  KEY ix_cc_status (status, check_date),
+  KEY ix_cc_shift (pos_shift_id),
+  KEY ix_cc_received (received_date),
+  KEY ix_cc_check (bank, check_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

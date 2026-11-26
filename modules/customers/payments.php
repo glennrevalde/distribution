@@ -195,6 +195,35 @@ handle_post(function () use ($edit, $customerId, $loadOpen, $pageKey, $existingA
         }
     }
 
+    // v9: a check: its date, number and bank. A post-dated check is not a payment yet: only its receipt is kept
+    // (Customer Checks, the cashier's Receipt of Post Dated Check); the payment is recorded on the check's date.
+    $methodId = pint('payment_method_id');
+    $check = null;
+    if (PayTypes::isCheck($methodId) && Checks::ready() && ($total > 0 || $edit)) {
+        [$chkDate, $chkNo, $chkBank] = Checks::fromPost();
+        $check = ['check_date' => $chkDate, 'check_no' => $chkNo, 'bank' => $chkBank, 'received_date' => $date];
+        if (Checks::postDated($chkDate)) {
+            if ($edit) {
+                fail('This payment is already recorded, so its check cannot be post-dated. A post-dated check is entered as a new payment; void this one first if it was a post-dated check.');
+            }
+            if ($sumDisc > 0 || $sumWht > 0 || $credits || $creditByDoc) {
+                fail('A post-dated check pays the invoices only. Record discounts, taxes withheld and credits separately, or when the check is recorded on its date.');
+            }
+            if ($total <= 0) {
+                fail('Enter the amount of the check.');
+            }
+            $checkId = Checks::receivePostDated([
+                'customer_id' => $customerId, 'source' => 'payment', 'bank' => $chkBank, 'check_no' => $chkNo, 'check_date' => $chkDate,
+                'amount' => $total, 'received_date' => today(), 'payment_method_id' => $methodId,
+                'account_id' => PayTypes::depositAccount($methodId, pint('account_id')), 'class_id' => Classes::ready() ? Classes::posted() : null,
+                'memo' => p('memo') ?: null, 'apply' => array_map(fn($x) => ['id' => (int)$x['target_txn_id'], 'amount' => r2($x['amount'])], array_filter($apps, fn($x) => $x['amount'] > 0)),
+            ]);
+            flash('success', 'Post-dated check received: ' . $chkBank . ' no. ' . $chkNo . ', ' . money($total) . ', dated ' . fdate($chkDate)
+                . '. Nothing is recorded in the books until then: on ' . fdate($chkDate) . ' the payment is recorded and applied to the invoices chosen.');
+            redirect_after_save(url($pageKey), url('cust.checks', ['a' => 'view', 'id' => $checkId]));
+        }
+    }
+
     // the payment and the credits are saved together: all of it, or none of it
     DB::begin();
     $paymentId = null;
@@ -202,9 +231,10 @@ handle_post(function () use ($edit, $customerId, $loadOpen, $pageKey, $existingA
         $h = [
             'txn_date'          => $date,
             'customer_id'       => $customerId,
-            'ref_no'            => p('ref_no') ?: null,
-            'payment_method_id' => pint('payment_method_id'),
-            'account_id'        => pint('account_id') ?: Accts::get('undeposited_funds'),
+            'ref_no'            => $check ? $check['check_no'] : (p('ref_no') ?: null),
+            'payment_method_id' => $methodId,
+            // v9: the payment type's G.L. account when it has one (Point of Sale > Payment Types & G.L. Accounts)
+            'account_id'        => PayTypes::depositAccount($methodId, pint('account_id')),
             'account2_id'       => Accts::get('ar'),
             'memo'              => p('memo') ?: null,
             'total'             => $total,
@@ -215,6 +245,12 @@ handle_post(function () use ($edit, $customerId, $loadOpen, $pageKey, $existingA
             $h['class_id'] = Classes::posted();
         }
         $paymentId = Txn::save('payment', $h, [], $edit ? (int)$edit['id'] : null, ['keep_totals' => true, 'applications' => $apps, 'withholdings' => $whtRows]);
+        // v9: the check goes on Customer Checks (On Date); a payment changed to another payment type leaves it
+        if ($check && $total > 0) {
+            Checks::attach($paymentId, $check);
+        } elseif ($edit && Checks::ready()) {
+            Checks::detach($paymentId);
+        }
     }
 
     // apply the available credits to the invoices, the oldest credit first
@@ -260,6 +296,8 @@ handle_post(function () use ($edit, $customerId, $loadOpen, $pageKey, $existingA
 });
 
 $docs = $loadOpen();
+// v9: what the customer's post-dated checks (not recorded yet) are meant to pay, shown on those invoices
+$pdcFor = $customerId ? Checks::pendingFor($customerId) : [];
 $credits = $customerId ? Balances::customerCredits($customerId) : [];
 if ($edit) {
     $credits = array_values(array_filter($credits, fn($c) => (int)$c['id'] !== (int)$edit['id']));
@@ -299,12 +337,31 @@ $lead = 6 + ($showJob ? 1 : 0) + ($showEarly ? 1 : 0) + 2;   // columns before C
   </div>
   <?= input_field('txn_date', 'Date', $payDate, ['type' => 'date', 'class' => 'col-md-2', 'required' => true]) ?>
   <?= input_field('amount', 'Amount received', fv('amount', $edit ? ['amount' => number_format((float)$edit['total'], 2, '.', '')] : null, ''), ['class' => 'col-md-2', 'extra' => 'id="payAmount" inputmode="decimal" autocomplete="off"']) ?>
-  <?= select_field('payment_method_id', 'Payment method', Lookup::paymentMethods(), fv('payment_method_id', $edit, $cust['payment_method_id'] ?? ''), ['blank' => '', 'class' => 'col-md-2']) ?>
-  <?= input_field('ref_no', 'Check / reference no.', fv('ref_no', $edit), ['class' => 'col-md-2']) ?>
-  <?= select_field('account_id', 'Deposit to', Accts::depositTo(), fv('account_id', $edit, Accts::get('undeposited_funds')), ['class' => 'col-md-4']) ?>
+  <?= select_field('payment_method_id', 'Payment method', Lookup::paymentMethods(), fv('payment_method_id', $edit, $cust['payment_method_id'] ?? ''), ['blank' => '', 'class' => 'col-md-2', 'extra' => 'id="payMethod"']) ?>
+  <?= input_field('ref_no', 'Reference no.', fv('ref_no', $edit), ['class' => 'col-md-2 pay-ref-col', 'extra' => 'id="payRef"']) ?>
+  <div class="col-md-4"><label class="form-label" for="payDeposit">Deposit to</label>
+    <select class="form-select form-select-sm" name="account_id" id="payDeposit"><?= options(Accts::depositTo(), fv('account_id', $edit, Accts::get('undeposited_funds'))) ?></select>
+    <div class="pay-gl-note" id="payGlNote" hidden></div></div>
   <?= Classes::field(fv('class_id', $edit), 'col-md-2') ?>
   <?= input_field('memo', 'Memo', fv('memo', $edit), ['class' => Classes::ready() ? 'col-md-6' : 'col-md-8']) ?>
 </div>
+<?php if (Checks::ready()):
+    // v9: the details of a check (a payment type of the kind Check); a post-dated one waits for its date
+    $chkSaved = $edit ? Checks::forPayment((int)$edit['id']) : null;
+?>
+<div class="pay-check" id="payCheck" hidden>
+  <div class="pay-check-title"><i class="bi bi-bank2"></i> Check details</div>
+  <div class="row g-2">
+    <?= input_field('chk_date', 'Check date', fv('chk_date', null, $chkSaved['check_date'] ?? $payDate), ['type' => 'date', 'class' => 'col-6 col-md-3', 'extra' => 'id="chkDate"']) ?>
+    <?= input_field('chk_no', 'Check number', fv('chk_no', null, $chkSaved['check_no'] ?? ($edit && PayTypes::isCheck($edit['payment_method_id'] ? (int)$edit['payment_method_id'] : null) ? (string)$edit['ref_no'] : '')), ['class' => 'col-6 col-md-3', 'extra' => 'id="chkNo" maxlength="40" autocomplete="off" inputmode="numeric"']) ?>
+    <?= input_field('chk_bank', 'Bank', fv('chk_bank', null, $chkSaved['bank'] ?? ''), ['class' => 'col-7 col-md-3', 'extra' => 'id="chkBank" maxlength="80" list="bankNames" autocomplete="off"']) ?>
+    <div class="col-5 col-md-3"><label class="form-label">Amount</label><div class="pay-check-amt" id="chkAmt">0.00</div></div>
+  </div>
+  <datalist id="bankNames"><?php foreach (PayTypes::bankNames() as $bn): ?><option value="<?= h($bn) ?>"><?php endforeach; ?></datalist>
+  <div class="pay-pdc" id="payPdc" hidden><i class="bi bi-calendar2-event"></i> <span>Post-dated check. Nothing is recorded in the books today: the check is kept on Customer Checks as Pending and on the cashier's report as Receipt of Post Dated Check. On <strong id="payPdcDate"></strong> the payment is recorded and applied to the invoices ticked below.</span></div>
+  <?php if ($chkSaved && in_array($chkSaved['status'], ['cleared', 'returned'], true)): ?><div class="small text-muted mt-2">This check is marked <?= h(Checks::statusText($chkSaved['status'])) ?> on <?= safe_link('cust.checks', ['a' => 'view', 'id' => $chkSaved['id']], 'Customer Checks') ?>.</div><?php endif; ?>
+</div>
+<?php endif; ?>
 <?php if ($cust): ?><div class="small text-muted mt-2">Customer balance: <strong><?= money(Balances::customerBalance($customerId)) ?></strong>
   <?php if ($creditTotal > 0): ?><span class="ms-3">Available credits: <strong><?= money($creditTotal) ?></strong></span><?php endif; ?></div><?php endif; ?>
 </div></div>
@@ -335,7 +392,7 @@ $lead = 6 + ($showJob ? 1 : 0) + ($showEarly ? 1 : 0) + 2;   // columns before C
       <tr data-doc="<?= $tid ?>" data-open="<?= h(number_format((float)$d['available'], 2, '.', '')) ?>">
         <td><input type="checkbox" class="form-check-input pay-cb" name="apply[<?= $tid ?>][selected]" value="1" <?= $ticked ? 'checked' : '' ?>></td>
         <td><?= h(fdate($d['txn_date'])) ?></td>
-        <td><?= h(Txn::label($d['txn_type'])) ?> <?= Txn::link($d) ?></td>
+        <td><?= h(Txn::label($d['txn_type'])) ?> <?= Txn::link($d) ?><?php if (isset($pdcFor[$tid])): ?><div class="pay-doc-pdc"><i class="bi bi-calendar2-event"></i> <?= h($pdcFor[$tid][1]) ?></div><?php endif; ?></td>
         <?php if ($showJob): ?><td class="small"><?= (int)$d['customer_id'] !== $customerId ? h(DB::value('SELECT name FROM customers WHERE id = :id', ['id' => $d['customer_id']])) : '' ?></td><?php endif; ?>
         <td class="<?= $overdue ? 'text-danger' : '' ?>"><?= h(fdate($d['due_date'])) ?></td>
         <td class="num"><?= money($d['total']) ?></td>
@@ -389,6 +446,65 @@ $lead = 6 + ($showJob ? 1 : 0) + ($showEarly ? 1 : 0) + 2;   // columns before C
 </div>
 <?php endif; ?>
 </form>
+<script>
+// v9: a payment type linked to a G.L. account fixes Deposit to; a check asks for its date, number and bank
+(function () {
+  const types = <?= json_encode((object)PayTypes::forJs()) ?>;
+  const today = <?= json_encode(today()) ?>;
+  const method = document.getElementById('payMethod');
+  const dep = document.getElementById('payDeposit');
+  const glNote = document.getElementById('payGlNote');
+  const box = document.getElementById('payCheck');
+  const refCol = document.querySelector('.pay-ref-col');
+  const amt = document.getElementById('payAmount');
+  if (!method || !dep) return;
+  let chosen = dep.value;
+  dep.addEventListener('change', () => { if (!dep.disabled) chosen = dep.value; });
+  const fmt = (v) => (window.AppFmt ? AppFmt.fmt(v) : Number(v || 0).toFixed(2));
+  function paintPdc() {
+    const d = document.getElementById('chkDate');
+    const pdc = document.getElementById('payPdc');
+    if (!d || !pdc) return;
+    const on = !box.hidden && d.value > today;
+    pdc.hidden = !on;
+    if (on) document.getElementById('payPdcDate').textContent = d.value.split('-').slice(1).concat(d.value.split('-')[0]).join('/');
+  }
+  function apply() {
+    const t = types[method.value] || null;
+    if (t && t.gl) {
+      if (!dep.disabled) chosen = dep.value;
+      if (![...dep.options].some((o) => o.value === String(t.gl))) {
+        const o = document.createElement('option'); o.value = String(t.gl); o.textContent = t.gl_name; dep.appendChild(o);
+      }
+      dep.value = String(t.gl);
+      dep.disabled = true;
+      glNote.hidden = false;
+      glNote.textContent = t.name + ' is linked to this account.';
+    } else {
+      dep.disabled = false;
+      if (dep.value !== chosen) dep.value = chosen;
+      glNote.hidden = true;
+    }
+    dep.dispatchEvent(new Event('change'));
+    if (dep.comboSync) dep.comboSync();
+    const isCheck = !!(t && t.type === 'check');
+    if (box) {
+      box.hidden = !isCheck;
+      box.querySelectorAll('input').forEach((i) => { i.disabled = !isCheck; });
+      ['chkDate', 'chkNo', 'chkBank'].forEach((id) => { const i = document.getElementById(id); if (i) i.required = isCheck; });
+    }
+    if (refCol) refCol.hidden = isCheck;
+    paintPdc();
+  }
+  method.addEventListener('change', apply);
+  document.getElementById('chkDate')?.addEventListener('input', paintPdc);
+  const showAmt = () => { const a = document.getElementById('chkAmt'); if (a && amt) a.textContent = fmt(Number(String(amt.value).replace(/,/g, '')) || 0); };
+  if (amt) { amt.addEventListener('input', showAmt); amt.addEventListener('change', showAmt); setInterval(showAmt, 800); }
+  showAmt();
+  apply();
+  document.addEventListener('DOMContentLoaded', apply);
+})();
+</script>
 <script>
 (function () {
   const { num, r2, fmt } = AppFmt;

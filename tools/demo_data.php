@@ -420,13 +420,18 @@ function load_demo_data(): void
         'site_id' => $nga, 'memo' => 'Phone order'], $sales([$kgLine('LVR-FZ', $nga, 2.5), $kgLine('WCK-FC', $nga, 6.2), $line('BLD', 2)], $cust('Juan Dela Cruz'), $nga));
 
     // payments
-    $pay($sun, $d(28), 60000, [['target_txn_id' => $inv1, 'amount' => 60000, 'discount' => 0, 'withholding' => 0]], ['payment_method_id' => $pm('Check'), 'ref_no' => 'BDO-004412']);
+    // (the invoice takes what it owes; the rest of the check stays with the customer as a credit)
+    $sunOpen = Balances::open(Txn::load($inv1));
+    $sunChk = $pay($sun, $d(28), 60000, [['target_txn_id' => $inv1, 'amount' => min(60000, $sunOpen), 'discount' => 0, 'withholding' => 0]], ['payment_method_id' => $pm('Check'), 'ref_no' => 'BDO-004412']);
+    Checks::attach($sunChk, ['check_date' => $d(28), 'check_no' => 'BDO-004412', 'bank' => 'BDO', 'received_date' => $d(28)]);
     $gOpen = Balances::open(Txn::load($invG));
     $gTot = (float)Txn::load($invG)['total'];
     $pay($grill, $d(34), r2($gOpen - r2($gTot * 0.02)), [['target_txn_id' => $invG, 'amount' => r2($gOpen - r2($gTot * 0.02)), 'discount' => r2($gTot * 0.02), 'withholding' => 0]],
         ['payment_method_id' => $pm('Bank Transfer'), 'ref_no' => 'IB-88123', 'account_id' => $acct('1010')]);
     $lOpen = Balances::open(Txn::load($invL));
-    $pay($lola, $d(37), $lOpen + 500, [['target_txn_id' => $invL, 'amount' => $lOpen, 'discount' => 0, 'withholding' => 0]], ['payment_method_id' => $pm('Check'), 'ref_no' => 'MBTC-1120']);
+    $lolaChk = $pay($lola, $d(37), $lOpen + 500, [['target_txn_id' => $invL, 'amount' => $lOpen, 'discount' => 0, 'withholding' => 0]], ['payment_method_id' => $pm('Check'), 'ref_no' => 'MBTC-1120']);
+    // v9: every check payment is on Customer Checks with its bank, number and date
+    Checks::attach($lolaChk, ['check_date' => $d(38), 'check_no' => 'MBTC-1120', 'bank' => 'Metrobank', 'received_date' => $d(37)]);
     $hOpen = Balances::open(Txn::load($invH));
     $pay($hosp, $d(26), round($hOpen / 2, 2), [['target_txn_id' => $invH, 'amount' => round($hOpen / 2, 2), 'discount' => 0, 'withholding' => 0]], ['payment_method_id' => $pm('GCash')]);
 
@@ -441,10 +446,11 @@ function load_demo_data(): void
     $govInv = Txn::load($invGov);
     $govW = [$wtRow('WT-VAT', (float)$govInv['subtotal'], 'sales'), $wtRow('WT-GOODS', (float)$govInv['subtotal'], 'sales')];
     $govWht = r2(array_sum(array_column($govW, 'amount')));
-    Txn::save('payment', ['txn_date' => $d(12), 'customer_id' => $gov, 'account_id' => $acct('1050'), 'account2_id' => Accts::get('ar'), 'payment_method_id' => $pm('Check'),
+    $govChk = Txn::save('payment', ['txn_date' => $d(12), 'customer_id' => $gov, 'account_id' => $acct('1050'), 'account2_id' => Accts::get('ar'), 'payment_method_id' => $pm('Check'),
         'ref_no' => 'LBP-205511', 'total' => r2((float)$govInv['total'] - $govWht), 'withholding_amount' => $govWht, 'memo' => '5% VAT and 1% withheld; BIR Form 2307 to follow'],
         [], null, ['keep_totals' => true, 'applications' => [['target_txn_id' => $invGov, 'amount' => r2((float)$govInv['total'] - $govWht), 'withholding' => $govWht]],
             'withholdings' => [$invGov => $govW]]);
+    Checks::attach($govChk, ['check_date' => $d(12), 'check_no' => 'LBP-205511', 'bank' => 'Land Bank', 'received_date' => $d(12)]);
 
     // credit memo (spoiled delivery returned) - kept as credit; the kilos come back as loose stock
     Txn::save('credit_memo', ['txn_date' => $d(47), 'customer_id' => $lola, 'account_id' => Accts::get('ar'), 'restock' => 0, 'site_id' => $nga,
@@ -531,12 +537,35 @@ function load_demo_data(): void
         'class_id' => $class['Naga Outlet'], 'subtotal' => 480, 'total' => 480, 'status' => 'open'], [
         ['line_kind' => 'journal', 'account_id' => $acct('6100'), 'amount' => 480, 'description' => 'Fares for small deliveries'],
     ], null, ['keep_totals' => true]);
+    // ---------------------------------------------------------------- v9: checks of customers, deposited below: one clears, one is returned
+    $chkPay = function (string $customer, string $date, string $bank, string $no) use ($pay, $pm, $cust) {
+        $cid = $cust($customer);
+        $docs = array_values(array_filter(Balances::openReceivables($cid), fn($x) => $x['txn_date'] <= $date));
+        if (!$docs) {
+            return null;
+        }
+        $amt = r2((float)$docs[0]['open_balance']);
+        $id = $pay($cid, $date, $amt, [['target_txn_id' => (int)$docs[0]['id'], 'amount' => $amt]], ['payment_method_id' => $pm('Check'), 'ref_no' => $no, 'memo' => 'Check ' . $bank . ' no. ' . $no]);
+        Checks::attach($id, ['check_date' => $date, 'check_no' => $no, 'bank' => $bank, 'received_date' => $date]);
+        return $id;
+    };
+    $chkClears = $chkPay('St. Raphael Hospital Kitchen', $d(27), 'BDO', '0048211');
+    $chkBounces = $chkPay('Sunrise Supermart Pili Branch', $d(26), 'Security Bank', '1102937');
     $uf = Accts::get('undeposited_funds');
     $toDeposit = DB::all("SELECT * FROM transactions WHERE txn_type IN ('payment','sales_receipt') AND account_id = :uf AND is_voided = 0 AND txn_date <= :d", ['uf' => $uf, 'd' => $d(24)]);
     $depLines = array_map(fn($t) => ['line_kind' => 'deposit', 'account_id' => $uf, 'amount' => (float)$t['total'], 'ref_txn_id' => $t['id'], 'customer_id' => $t['customer_id'],
         'description' => Txn::ref($t)], $toDeposit);
     $depLines[] = ['line_kind' => 'deposit', 'account_id' => $acct('4200'), 'amount' => 1250.00, 'description' => 'Interest on time deposit'];
     Txn::save('deposit', ['txn_date' => $d(24), 'account_id' => $acct('1010'), 'ref_no' => 'DS-1001', 'memo' => 'Deposit', 'status' => 'open'], $depLines);
+    foreach (array_filter([$lolaChk, $chkClears, $sunChk]) as $pid) {
+        $ck = Checks::forPayment((int)$pid);
+        if ($ck) {
+            Checks::markCleared((int)$ck['id'], $d(22), 'Deposit slip DS-1001');
+        }
+    }
+    if ($chkBounces && ($ck = Checks::forPayment((int)$chkBounces))) {
+        Checks::markReturned((int)$ck['id'], $d(21), 'Insufficient funds (DAIF)');
+    }
 
     // ---------------------------------------------------------------- depreciation (two months)
     for ($i = 2; $i >= 1; $i--) {
@@ -617,7 +646,7 @@ function load_demo_data(): void
     Audit::log('shift_open', 'pos', 'shift', $shift1, 'Naga Outlet Counter 1', ['amount' => 3000]);
     $cash = $pm('Cash');
     $s1 = $posSale($shift1, $yday, [$kgLine('WCK-FC', $not, 3.4), $kgLine('BLB-250', $not, 2)], [[$cash, 'cash']], null, 1000);
-    $posSale($shift1, $yday, [$crateLine('WCK-FC', $not, 1, 170)], [[$pm('Credit/Debit Card'), 'full']], $tess);
+    $posSale($shift1, $yday, [$crateLine('WCK-FC', $not, 1, 170)], [[$pm('BPI'), 'full']], $tess);
     $posSale($shift1, $yday, [$kgLine('LVR-FZ', $not, 1.2), $kgLine('NGT-500', $not, 1)], [[$pm('GCash'), 'full']]);
     $s4 = $posSale($shift1, $yday, [$kgLine('BBD-FC', $not, 4.6)], [[$cash, 'cash']], null, 1000);
     $posSale($shift1, $yday, [$line('PARTY-PK', 1), $line('ACU-FZ', 2)], [[$cash, 'cash']], null, 1500);
@@ -656,7 +685,36 @@ function load_demo_data(): void
     $shift2 = DB::insert('pos_shifts', ['terminal_id' => $term, 'cashier_id' => $cashier, 'business_date' => today(), 'opening_float' => 3000]);
     Audit::log('shift_open', 'pos', 'shift', $shift2, 'Naga Outlet Counter 1', ['amount' => 3000]);
     $posSale($shift2, today(), [$kgLine('WCK-FC', $not, 2.8), $line('BLD', 1)], [[$cash, 'cash']], null, 1000);
-    $posSale($shift2, today(), [$line('GRP-FIESTA', 1)], [[$pm('Maya'), 'full']]);
+    $posSale($shift2, today(), [$line('GRP-FIESTA', 1)], [[$pm('Metrobank'), 'full']]);
+    // v9: customers paying their account at the counter by check: one dated today (a payment), one post-dated
+    // (only received: Receipt of Post Dated Check on the shift, recorded as payment on its date)
+    $chkM = $pm('Check');
+    $tessDocs = Balances::openReceivables($tess);
+    if ($tessDocs) {
+        $amt = r2((float)$tessDocs[0]['open_balance']);
+        $pid = Txn::save('payment', ['txn_date' => today(), 'site_id' => $not, 'terminal_id' => $term, 'pos_shift_id' => $shift2, 'customer_id' => $tess,
+            'account_id' => PayTypes::account($chkM, null, true), 'account2_id' => Accts::get('ar'), 'payment_method_id' => $chkM, 'total' => $amt,
+            'ref_no' => '3300718', 'memo' => 'Payment at Naga Outlet Counter 1', 'receipt_no' => Pos::nextReceipt($term), 'class_id' => $class['Naga Outlet']],
+            [], null, ['keep_totals' => true, 'applications' => [['target_txn_id' => (int)$tessDocs[0]['id'], 'amount' => $amt]]]);
+        Checks::attach($pid, ['check_date' => today(), 'check_no' => '3300718', 'bank' => 'BPI', 'received_date' => today()]);
+    }
+    $lolaDocs = Balances::openReceivables($lola);
+    if ($lolaDocs) {
+        Checks::receivePostDated(['customer_id' => $lola, 'source' => 'pos', 'terminal_id' => $term, 'pos_shift_id' => $shift2, 'site_id' => $not,
+            'bank' => 'Metrobank', 'check_no' => '0091544', 'check_date' => $d(-10), 'amount' => r2((float)$lolaDocs[0]['open_balance']), 'received_date' => today(),
+            'payment_method_id' => $chkM, 'account_id' => PayTypes::account($chkM, null, true), 'class_id' => $class['Naga Outlet'], 'memo' => 'Received at Naga Outlet Counter 1',
+            'apply' => [['id' => (int)$lolaDocs[0]['id'], 'amount' => r2((float)$lolaDocs[0]['open_balance'])]]]);
+    }
+    // a post-dated check received on Receive Payments by the A/R clerk
+    Auth::actAs($user('arclerk'));
+    $sunDocs = array_slice(Balances::openReceivables($cust('Sunrise Supermart')), 0, 2);
+    if ($sunDocs) {
+        $amt = r2(array_sum(array_map(fn($x) => (float)$x['open_balance'], $sunDocs)));
+        Checks::receivePostDated(['customer_id' => $cust('Sunrise Supermart'), 'source' => 'payment', 'bank' => 'BDO', 'check_no' => '7710352', 'check_date' => $d(-20),
+            'amount' => $amt, 'received_date' => $d(2), 'payment_method_id' => $chkM, 'account_id' => $acct('1050'), 'memo' => 'Two invoices, dated check',
+            'apply' => array_map(fn($x) => ['id' => (int)$x['id'], 'amount' => r2((float)$x['open_balance'])], $sunDocs)]);
+    }
+    Auth::actAs($cashier);
     Access::reset();
     Audit::log('access_denied', 'security', 'page', null, 'User Role Configuration (open)', ['page_key' => 'admin.roles']);
     unset($_SESSION['pos_terminal_id']);

@@ -62,6 +62,22 @@ if ($route !== 'auth.logout' && ($_SESSION[$memKey] ?? '') !== today()) {
     }
 }
 
+// v9: post-dated checks whose date has come are recorded as payments (dated the check's date, with their journal
+// entries), the first time anyone opens the system that day. Checks of a site this user may not record for wait.
+$pdcKey = 'pdc_auto_day' . (Tenant::id() ? ':' . Tenant::id() : '');
+if ($route !== 'auth.logout' && ($_SESSION[$pdcKey] ?? '') !== today() && Checks::ready()) {
+    $_SESSION[$pdcKey] = today();
+    try {
+        $pdcDone = Checks::postDue(true);
+        if ($pdcDone && Access::page('cust.checks')) {
+            flash('info', count($pdcDone) . ' post-dated check' . (count($pdcDone) === 1 ? ' has' : 's have') . ' reached its date and ' . (count($pdcDone) === 1 ? 'was' : 'were')
+                . ' recorded as payment. See Customers > Customer Checks.');
+        }
+    } catch (Throwable $e) {
+        // never stops a page from opening; the Customer Checks page shows what could not be recorded
+    }
+}
+
 // routes every logged-in user can open
 if ($open = Access::openRoute($route)) {
     require __DIR__ . '/modules/' . $open;

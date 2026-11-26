@@ -115,6 +115,12 @@ The system serves any number of companies. Each has its **own database**, so no 
 - **Transfer Reports** (v8, Inventory → Reports → Transfer Reports): **Transfers by Item Code** and **Transfers by Site** list what Transfer Inventory and Dispatch Inventory sent, grouped with a subtotal per item code or per site, with the production and expiry dates each line went with and the days it had left when sent.
 - **Home:** open crates in storage with the number expiring within three days, and Today's pick-ups.
 
+### Payment types, checks and the Check Registry (v9)
+
+- **Payment Types & G.L. Accounts** (Point of Sale → Setup): every payment type (Cash, Check, BPI, Metrobank, EastWest, Gotymebank, BOC, GCash ...) with the General Ledger account it is debited to, at the POS and on every payment form.
+- **Customer paying an account balance** at the POS: the customer's outstanding invoices to tick, then the payment details.
+- **Checks**: date, number, bank and amount. Post-dated checks wait as Pending (Receipt of Post Dated Check on the cashier's reports) and become payments, with their journal entries, on their date. **Customer Checks** marks them Cleared or Returned; the **Check Registry** lists them.
+
 ### Van stores, outlets and shortages (Inventory)
 
 - **Inventory Transfer Closing:** the van salesman remits his sales and brings back what is left. Choose the van store or outlet (From), the warehouse or cold storage (To) and the date; every item it still holds is listed with its balance, one line per crate and one for the loose stock. Type what came back in **Transfer Qty/Wgt** (re-weighed crates, kilos, packs or any unit of the item). Each difference is **shrinkage**, a **shortage**, or part of each: a crate that came back lighter goes to shrinkage, anything missing to shortage, and both can be changed. Fields: Shrinkage Adjustment GL Account, Shortage Receivable GL Account, the cashier, sales rep or customer charged, Transferred by, Checked by, Received by. Saving enters the transfer back (crates whole), an adjustment for the shrinkage (to the adjustment account, at average cost) and a **Shortage Charge** for the shortage. Buttons: New closing, Reset, Save, Save & New, Close; a closing is voided as a whole.
@@ -125,7 +131,31 @@ The system serves any number of companies. Each has its **own database**, so no 
 
 The User's Manual (Help button on every page) has a chapter on all of this: **8. Distribution and Crates**.
 
-### Updating from the previous version (v8)
+### Updating from the previous version (v9)
+
+One database update, `database/migrations/2027_05_03_payment_types_checks.sql`. It is written for MySQL 5.5 and can be run twice safely. It:
+
+- renames five payment types to the banks the company is paid through: Credit/Debit Card → **BPI**, Maya → **Metrobank**, Gift Voucher → **EastWest**, P.O. Card → **Gotymebank**, Bank → **BOC** (each only when no type has the new name yet). They become bank payment types, linked to the Bank account whose name carries the bank's name when exactly one does; the others wait for you to link them (until then their payments go to Undeposited Funds);
+- keeps, on every POS tender already recorded, the account it was posted to (a new column `pos_tenders.account_id`), so a past sale never moves to another account;
+- adds the table `customer_checks` (the checks received from customers);
+- adds Point of Sale → Setup → **Payment Types & G.L. Accounts**, Customers → **Customer Checks**, Customers → Reports → **Check Registry** and **Collections by Cashier / User**, given to the roles that already have the pages next to them.
+
+1. Back up every company database.
+2. Copy the new program files over the old ones.
+3. Log in as `superadmin` and open **Database updates**: press **Update all companies**. Without the platform, import the file into each company database in phpMyAdmin (Import).
+4. Open **Point of Sale → Payment Types & G.L. Accounts** and choose the G.L. account of each payment type (create the bank accounts in the Chart of Accounts first if they are not there).
+
+What is new:
+
+- **Payment types BPI, Metrobank, EastWest, Gotymebank and BOC** on the POS Register, the FB POS and every payment form.
+- **Payment Types & G.L. Accounts** (Point of Sale → Setup): link every payment type to a General Ledger account chosen from the Chart of Accounts. That account is debited every time a payment of the type comes in: POS sales (a return credits it), customers paying an account balance at the counter, Receive Payments and Enter Sales Receipts, where **Deposit to** follows the account and is locked. Rename, add, take off the POS or deactivate payment types on the same page.
+- **Customer paying an account balance** (POS Register and FB POS): choose the customer and the **outstanding invoices** appear (earliest due first, overdue in red); tick the invoices being paid and the **payment details** appear, with the amount already filled in. The payment goes to the invoices ticked, the receipt shows each invoice it paid.
+- **Checks** (POS account payments and Receive Payments): **Check date**, **Check number**, **Bank** and the amount. A check dated today or earlier is a payment at once. A **post-dated check is not a payment**: only its receipt is kept (an acknowledgement slip at the POS), it is listed on the cashier's report and shift as **Receipt of Post Dated Check** with its details, and when its date arrives the system records the payment (dated the check date, applied to the invoices chosen) and its journal entries, the first time anyone opens the system that day.
+- **Customer Checks** (Customers): every check with its status (Pending, On Date, Cleared, Returned); mark checks **Cleared** (several at once) or **Returned** (the amount goes back on the customer's account with a statement charge, credited to the bank it was deposited to), set back, record a due payment, or remove a post-dated check given back.
+- **CHECK REGISTRY** (Customers → Reports): Customer Name, Bank, Check Number, Check Date, Amount and Status (Pending when post-dated, On Date when its date is on or before today, Cleared when deposited and honored, Returned when deposited and dishonored), from the POS and from Receive Payments.
+- **Collections by Cashier / User** (Customers → Reports): what each cashier or user collected, by payment type, and the post-dated checks they received. **POS Sales by Cashier & Payment Method** and the shift's X- and Z-readings also list the account payments and the **Receipt of Post Dated Check**.
+
+### Updating from v8
 
 One small database update, `database/migrations/2027_04_19_transfer_reports.sql`, adds the two Transfer Reports and gives them to the roles that already have Transfer Inventory, Dispatch Inventory or the Inventory Movement Summary report. No table or column is added and no record changes. It is written for MySQL 5.5 and can be run twice safely.
 

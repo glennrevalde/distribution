@@ -51,6 +51,10 @@ function seed_master_data(): void
         ['1006', 'Revolving Fund', 'Bank', null, '1000'],
         ['1010', 'Cash in Bank - BDO Checking', 'Bank', null, '1000'],
         ['1020', 'Cash in Bank - BPI Savings', 'Bank', null, '1000'],
+        ['1025', 'Cash in Bank - Metrobank', 'Bank', null, '1000'],
+        ['1030', 'Cash in Bank - EastWest', 'Bank', null, '1000'],
+        ['1035', 'Cash in Bank - GoTyme Bank', 'Bank', null, '1000'],
+        ['1040', 'Cash in Bank - BOC', 'Bank', null, '1000'],
         ['1050', 'Undeposited Funds', 'Other Current Asset', null, null],
         ['1060', 'Card Clearing', 'Other Current Asset', null, null],
         ['1065', 'E-wallet Clearing', 'Other Current Asset', null, null],
@@ -170,11 +174,12 @@ function seed_master_data(): void
     Withholding::reset();
 
     $pm = [];
-    // name, type, POS clearing account, offered as a payment option on the POS register
+    // name, type, G.L. account (Point of Sale > Payment Types & G.L. Accounts), offered as a payment option on the POS register
+    // v9: the banks the company is paid through (BPI, Metrobank, EastWest, Gotymebank, BOC), each to its own bank account
     foreach ([
-        ['Cash', 'cash', null, 1], ['Check', 'check', null, 0], ['Credit/Debit Card', 'card', '1060', 1], ['GCash', 'ewallet', '1065', 1],
-        ['Maya', 'ewallet', '1065', 1], ['Bank Transfer', 'bank_transfer', null, 0], ['Gift Voucher', 'voucher', '2120', 1],
-        ['P.O. Card', 'card', '1070', 1], ['Bank', 'bank_transfer', '1010', 1],
+        ['Cash', 'cash', null, 1], ['Check', 'check', null, 0], ['BPI', 'bank_transfer', '1020', 1], ['GCash', 'ewallet', '1065', 1],
+        ['Metrobank', 'bank_transfer', '1025', 1], ['Bank Transfer', 'bank_transfer', null, 0], ['EastWest', 'bank_transfer', '1030', 1],
+        ['Gotymebank', 'bank_transfer', '1035', 1], ['BOC', 'bank_transfer', '1040', 1],
     ] as [$n, $t, $a, $pos]) {
         $pm[$n] = DB::insert('payment_methods', ['name' => $n, 'method_type' => $t, 'clearing_account_id' => $a ? $acct[$a] : null, 'show_in_pos' => $pos]);
     }
@@ -269,7 +274,7 @@ function seed_master_data(): void
             'pages' => [
                 'home:*' => 'P', 'coa:*' => 'CEDP', 'fa:*' => 'CEDP', 'bank:*' => 'CEDP',
                 'cust:report' => 'P', 'vend:report' => 'P', 'inv:report' => 'P', 'pos:report' => 'P',
-                'cust.center' => 'P', 'cust.payments' => 'P', 'cust.invoices' => 'P', 'vend.center' => 'P',
+                'cust.center' => 'P', 'cust.payments' => 'P', 'cust.checks' => 'EP', 'cust.invoices' => 'P', 'vend.center' => 'P', 'pos.payment_types' => 'CEP',
                 'vend.bill_tracker' => 'P', 'vend.bills' => 'P', 'vend.pay_bills' => 'P', 'vend.advances' => 'P', 'bir:*' => 'CEDP',
                 'inv.center' => 'P', 'inv.items' => 'P', 'inv.categories' => 'P', 'inv.adjust' => 'P', 'inv.process' => 'P', 'inv.formulas' => 'P', 'inv.uom' => 'P',
                 'inv.transfer_closing' => 'P', 'inv.shortages' => 'P', 'inv.lot_check' => 'P', 'admin.utilities' => 'P',
@@ -320,7 +325,8 @@ function seed_master_data(): void
         ],
         'POS Supervisor' => [
             'desc' => 'Everything a cashier can do, plus approving voids, refunds, price overrides, and large discounts, and running X- and Z-readings.',
-            'pages' => ['home.dashboard' => '', 'home.reports' => '', 'pos.register' => 'CEDPA', 'pos.shifts' => 'CEDPA', 'pos.receipts' => 'CEDPA', 'pos.approval_codes' => 'CEDPA', 'pos.terminals' => 'P', 'pos:report' => 'P'],
+            'pages' => ['home.dashboard' => '', 'home.reports' => '', 'pos.register' => 'CEDPA', 'pos.shifts' => 'CEDPA', 'pos.receipts' => 'CEDPA', 'pos.approval_codes' => 'CEDPA', 'pos.terminals' => 'P', 'pos:report' => 'P',
+                'pos.payment_types' => 'P', 'rpt.check_registry' => 'P', 'rpt.cashier_collections' => 'P'],
             'special' => ['view_costs' => '0', 'max_discount_pct' => '30', 'max_price_override_pct' => '20', 'max_amount' => '20000'],
         ],
         'Allocation Officer' => [

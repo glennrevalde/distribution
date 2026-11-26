@@ -121,15 +121,9 @@ $canMenu = Access::page('pos.fb_menu');
         </div>
       </div>
     </form>
-    <details class="card fb-account">
+    <details class="card fb-account"<?= is_post() && p('do') === 'payment' ? ' open' : '' ?>>
       <summary class="card-header small fw-semibold">Customer paying an account balance</summary>
-      <form method="post" class="card-body row g-2"><?= csrf_field() ?><input type="hidden" name="do" value="payment">
-        <div class="col-12"><select class="form-select form-select-sm" name="pay_customer_id" required aria-label="Customer"><?= options(Lookup::customers(false), null, 'Customer…') ?></select></div>
-        <div class="col-6"><input class="form-control form-control-sm text-end" name="pay_amount" placeholder="Amount" required inputmode="decimal" aria-label="Amount"></div>
-        <div class="col-6"><select class="form-select form-select-sm" name="pay_method_id" aria-label="Payment method"><?= options(array_column($methods, 'name', 'id'), null) ?></select></div>
-        <div class="col-8"><input class="form-control form-control-sm" name="pay_ref" placeholder="Reference" aria-label="Reference"></div>
-        <div class="col-4"><button class="btn btn-sm btn-outline-success w-100">Receive</button></div>
-      </form>
+      <div class="card-body"><?php $apWrap = 'plain'; require __DIR__ . '/_account_pay.php'; ?></div>
     </details>
   </aside>
 </div>

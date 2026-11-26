@@ -242,7 +242,7 @@ final class Importer
                     'price'       => ['Price per unit', 'num', true],
                     'discount_pct' => ['Discount %', 'num'],
                     'tax_code'    => ['Tax code', 'ref:tax_codes'],
-                    'payment_method' => ['Payment method: Cash, GCash, P.O. Card ...', 'ref:payment_methods'],
+                    'payment_method' => ['Payment method: Cash, GCash, BPI ...', 'ref:payment_methods'],
                     'class'       => ['Class', 'ref:classes'],
                 ],
                 'sample' => ['POS1-IMP-0001', '2026-09-05', 'POS-01', '', 'BRS-FZ', 'Chicken Breast, Frozen', '1.5', '210', '0', 'VAT12', 'Cash', 'Naga Outlet'],

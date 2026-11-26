@@ -15,8 +15,9 @@ $lists = [
     ]],
     'payment_methods' => ['Payment methods', [
         'name' => ['Name', 'text'],
-        'method_type' => ['Type', 'select', ['cash' => 'Cash', 'check' => 'Check', 'card' => 'Card', 'ewallet' => 'E-wallet', 'bank_transfer' => 'Bank transfer', 'voucher' => 'Gift voucher', 'other' => 'Other']],
-        'clearing_account_id' => ['POS clearing account', 'select', $accounts], 'show_in_pos' => ['POS payment option', 'bool'], 'is_active' => ['Active', 'bool'],
+        'method_type' => ['Type', 'select', PayTypes::TYPES],
+        // v9: the account debited every time money comes in this way (Point of Sale > Payment Types & G.L. Accounts)
+        'clearing_account_id' => ['G.L. account', 'select', $accounts], 'show_in_pos' => ['POS payment option', 'bool'], 'is_active' => ['Active', 'bool'],
     ]],
     'price_levels' => ['Price levels', ['name' => ['Name', 'text'], 'adjust_pct' => ['Adjust standard price by %', 'num'], 'is_active' => ['Active', 'bool']]],
     'sales_reps' => ['Sales representatives', array_merge([
@@ -118,6 +119,9 @@ layout_start('Terms, Tax Codes & Other Lists');
 <ul class="nav nav-tabs mb-3">
   <?php foreach ($lists as $k => [$t]): ?><li class="nav-item"><a class="nav-link <?= $k === $tab ? 'active' : '' ?>" href="<?= h(url($pageKey, ['tab' => $k])) ?>"><?= h($t) ?></a></li><?php endforeach; ?>
 </ul>
+<?php if ($tab === 'payment_methods'): ?>
+<div class="small text-muted mb-2"><i class="bi bi-info-circle"></i> The G.L. account of each payment type, and where it is used, is also set on <?= safe_link('pos.payment_types', [], 'Point of Sale > Payment Types & G.L. Accounts') ?>.</div>
+<?php endif; ?>
 <?php if ($tab === 'item_categories'): ?>
 <div class="small text-muted mb-2"><i class="bi bi-info-circle"></i> Categories can also be deleted or merged, with their item counts, on <?= safe_link('inv.categories', [], 'Inventory > Category List') ?>.</div>
 <?php endif; ?>

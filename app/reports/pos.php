@@ -112,6 +112,29 @@ Report::define('pos_sales_cashier', [
             $pay[(int)$r['created_by']][] = ['name' => 'Charged to customer accounts', 'type' => 'On account', 'count' => (int)$r['c'], 'tendered' => r2($r['s'])];
             $by[(int)$r['created_by']] ??= ['qty' => 0, 'amount' => 0, 'disc' => 0, 'cost' => 0, 'txns' => []];
         }
+        // v9: customers paying an account balance at the counter (by payment type), and the post-dated checks received
+        // (Receipt of Post Dated Check, with their details): shown under each cashier, not in the tendered sales
+        $extra = [];
+        foreach (DB::all("SELECT t.created_by, COALESCE(pm.name, '(no payment type)') AS name, COUNT(*) AS c, SUM(t.total) AS s FROM transactions t
+                            LEFT JOIN payment_methods pm ON pm.id = t.payment_method_id
+                           WHERE t.txn_type = 'payment' AND t.terminal_id IS NOT NULL AND t.is_voided = 0 AND t.txn_date BETWEEN :f AND :t $and
+                           GROUP BY t.created_by, pm.name ORDER BY pm.name", $p) as $r) {
+            $extra[(int)$r['created_by']][] = ['name' => $r['name'], 'type' => 'Account payment', 'count' => (int)$r['c'], 'tendered' => r2($r['s']), '_class' => 'indent-1'];
+            $by[(int)$r['created_by']] ??= ['qty' => 0, 'amount' => 0, 'disc' => 0, 'cost' => 0, 'txns' => []];
+        }
+        $pdcList = array_values(array_filter(Checks::pdcReceived(['from' => $f['from'], 'to' => $f['to'], 'user_id' => $f['user_id'] ?? null,
+            'terminal_id' => $f['terminal_id'] ?? null, 'site_id' => $f['site_id'] ?? null]), fn($c) => $c['source'] === 'pos'));
+        foreach ($pdcList as $c) {
+            $uid = (int)$c['created_by'];
+            $by[$uid] ??= ['qty' => 0, 'amount' => 0, 'disc' => 0, 'cost' => 0, 'txns' => []];
+            if (!isset($extra[$uid]['pdc'])) {
+                $extra[$uid]['pdc'] = ['name' => 'Receipt of Post Dated Check', 'type' => 'Not yet paid', 'count' => 0, 'tendered' => 0.0, '_class' => 'indent-1'];
+            }
+            $extra[$uid]['pdc']['count']++;
+            $extra[$uid]['pdc']['tendered'] = r2($extra[$uid]['pdc']['tendered'] + (float)$c['amount']);
+            $extra[$uid]['pdc_rows'][] = ['name' => $c['customer_name'] . ': ' . $c['bank'] . ' no. ' . $c['check_no'] . ', dated ' . fdate($c['check_date']),
+                'type' => 'Post-dated check', 'tendered' => r2((float)$c['amount']), '_class' => 'indent-2'];
+        }
         uksort($by, fn($a, $b) => strcmp($users[$a] ?? '?', $users[$b] ?? '?'));
         $rows = [];
         $tot = ['name' => 'TOTAL', 'count' => 0, 'qty' => 0.0, 'disc' => 0.0, 'amount' => 0.0, 'cost' => 0.0, 'margin' => 0.0, 'voids' => 0, 'tendered' => 0.0];
@@ -125,6 +148,17 @@ Report::define('pos_sales_cashier', [
                 $byMethod[$m['name']]['count'] = ($byMethod[$m['name']]['count'] ?? 0) + $m['count'];
                 $byMethod[$m['name']]['tendered'] = ($byMethod[$m['name']]['tendered'] ?? 0) + $m['tendered'];
                 $byMethod[$m['name']]['type'] = $m['type'];
+            }
+            foreach ($extra[$uid] ?? [] as $k => $x) {
+                if ($k !== 'pdc' && $k !== 'pdc_rows') {
+                    $rows[] = $x;
+                }
+            }
+            if (isset($extra[$uid]['pdc'])) {
+                $rows[] = $extra[$uid]['pdc'];
+                foreach ($extra[$uid]['pdc_rows'] as $x) {
+                    $rows[] = $x;
+                }
             }
             $tot['count'] += count($b['txns']);
             $tot['qty'] += $b['qty'];
@@ -156,7 +190,8 @@ Report::define('pos_sales_cashier', [
                 ['key' => 'voids', 'label' => 'Voids', 'type' => 'int'], ['key' => 'tendered', 'label' => 'Tendered (incl. VAT)', 'type' => 'money'],
             ],
             'rows' => $rows, 'totals' => $tot,
-            'notes' => 'Each cashier\'s line is their counter sales less returns, net of VAT, with the number of receipts and voids. The lines under it show how the money came in, by payment method, VAT included; "Charged to customer accounts" is the sales put on account at the counter.',
+            'notes' => 'Each cashier\'s line is their counter sales less returns, net of VAT, with the number of receipts and voids. The lines under it show how the money came in, by payment method, VAT included; "Charged to customer accounts" is the sales put on account at the counter. '
+                . 'Account payments are customers paying a balance at the counter, by payment type; Receipt of Post Dated Check lists the post-dated checks received, with their details. Neither is in the tendered total of the sales.',
         ];
     },
 ]);
