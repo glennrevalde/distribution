@@ -193,6 +193,9 @@ return [
         'rpt.shortage_detail'  => ['inv', 'Shortage Detail', 'report', 'Shortage and Shrinkage Reports', 'reports/run.php', ['report' => 'shortage_detail'], 1],
         'rpt.shrinkage_item'   => ['inv', 'Shrinkage by Item', 'report', 'Shortage and Shrinkage Reports', 'reports/run.php', ['report' => 'shrinkage_item'], 1],
         'rpt.shrinkage_detail' => ['inv', 'Shrinkage Detail', 'report', 'Shortage and Shrinkage Reports', 'reports/run.php', ['report' => 'shrinkage_detail'], 1],
+        // v8: Transfer Inventory and Dispatch Inventory, grouped by item code or by the site the stock left
+        'rpt.transfer_item'    => ['inv', 'Transfers by Item Code', 'report', 'Transfer Reports', 'reports/run.php', ['report' => 'transfer_item'], 1],
+        'rpt.transfer_site'    => ['inv', 'Transfers by Site', 'report', 'Transfer Reports', 'reports/run.php', ['report' => 'transfer_site'], 1],
         'rpt.qoh_by_site'          => ['inv', 'Quantity on Hand by Site', 'report', 'Inventory Reports', 'reports/run.php', ['report' => 'qoh_by_site'], 1],
         'rpt.inv_valuation_summary'=> ['inv', 'Inventory Valuation Summary', 'report', 'Inventory Reports', 'reports/run.php', ['report' => 'inv_valuation_summary'], 1],
         'rpt.inv_valuation_site'   => ['inv', 'Inventory Valuation Summary by Site', 'report', 'Inventory Reports', 'reports/run.php', ['report' => 'inv_valuation_site'], 1],

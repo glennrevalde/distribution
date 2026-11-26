@@ -15,6 +15,13 @@ declare(strict_types=1);
  *   ::render($t)                the page with the slip and its buttons (Print, Bluetooth printer, Save as PDF)
  *   ::ops($model)               the slip for the Bluetooth printer (assets/js/btprint.js)
  *   ::pdf($model)               the slip as a PDF, as wide as the paper roll
+ *
+ * v8: two ways to lay the slip out, chosen on its page (Group by: Item code / Site), and followed by the Bluetooth
+ * printer and the PDF:
+ *  - by item code: the crates and lines of each item together, with a subtotal under each item (the crates and the
+ *    kilos of FMWC, then of FMBB...). A dispatch from many sites prints the site's code beside the item code;
+ *  - by site: the site's name as a heading, what left that site under it (item by item), and a subtotal per site.
+ * The subtotals print when there is more than one item (or site); the total stays at the foot.
  */
 final class TransferReceipt
 {
@@ -24,9 +31,19 @@ final class TransferReceipt
         return Crates::fig($qty, $unit) . $unit;
     }
 
-    public static function model(array $t): array
+    /** v8: the layout asked for on the slip's page: 'item' (by item code, the default) or 'site' */
+    public static function group(): string
+    {
+        return g('group') === 'site' ? 'site' : 'item';
+    }
+
+    public static function model(array $t, string $group = 'item'): array
     {
         $id = (int)$t['id'];
+        $group = $group === 'site' ? 'site' : 'item';
+        $siteRows = DB::all('SELECT id, code, name FROM sites');
+        $siteCode = array_column($siteRows, 'code', 'id');
+        $siteName = array_column($siteRows, 'name', 'id');
         $dispatch = ($t['txn_type'] ?? '') === 'inventory_dispatch';     // v4: Dispatch Inventory prints the same slip
         $s = Settings::all();
         $lines = array_values(array_filter(Txn::lines($id), fn($l) => !empty($l['item_id'])));
@@ -45,13 +62,17 @@ final class TransferReceipt
         $rows = [];
         $units = [];        // unit => total, in the order they first appear
         $crateCount = 0;
+        $sites = [];        // v8: the sites the stock left, in the order of the lines
         foreach ($lines as $l) {
             $base = Crates::baseUnit((int)$l['item_id']);
             $code = (string)$l['item_code'];
+            $sid = $dispatch ? (int)($l['site_id'] ?: $t['site_id']) : (int)$t['site_id'];
+            $sites[$sid] = true;
+            $at = ['site_id' => $sid, 'site_code' => (string)($siteCode[$sid] ?? ''), 'site' => (string)($siteName[$sid] ?? '')];
             $inCrates = 0.0;
             foreach ($crates[(int)$l['id']] ?? [] as $c) {
                 $w = max(0.0, round((float)$c['w'], 4));
-                $rows[] = ['crate' => (string)$c['crate_no'], 'code' => $code, 'qty' => $w, 'unit' => $base];
+                $rows[] = ['crate' => (string)$c['crate_no'], 'code' => $code, 'qty' => $w, 'unit' => $base] + $at;
                 $units[$base] = ($units[$base] ?? 0.0) + $w;
                 $inCrates += $w;
                 $crateCount++;
@@ -71,14 +92,50 @@ final class TransferReceipt
             if (abs($q) <= 0.00005) {
                 continue;
             }
-            $rows[] = ['crate' => '', 'code' => $code, 'qty' => $q, 'unit' => $u];
+            $rows[] = ['crate' => '', 'code' => $code, 'qty' => $q, 'unit' => $u] + $at;
             $units[$u] = ($units[$u] ?? 0.0) + $q;
+        }
+        $many = count($sites) > 1;
+
+        // v8: the groups the slip is laid out in: by item code (each item's crates together), or by site (what left
+        // each site, item by item); a subtotal under each when there is more than one
+        $itemOrder = [];
+        foreach ($rows as $r) {
+            $itemOrder[$r['code']] ??= count($itemOrder);
+        }
+        $groups = [];
+        foreach ($rows as $n => $r) {
+            $k = $group === 'site' ? 's' . $r['site_id'] : 'i' . $r['code'];
+            if (!isset($groups[$k])) {
+                $groups[$k] = $group === 'site'
+                    ? ['key' => $k, 'title' => $r['site'], 'label' => $r['site_code'] !== '' ? $r['site_code'] : $r['site'], 'site_id' => $r['site_id'], 'site_code' => $r['site_code'], 'rows' => [], 'crates' => 0, 'units' => []]
+                    : ['key' => $k, 'title' => $r['code'], 'label' => $r['code'], 'site_id' => null, 'site_code' => '', 'rows' => [], 'crates' => 0, 'units' => []];
+            }
+            $groups[$k]['rows'][] = $r + ['_n' => $n];
+            if ($r['crate'] !== '') {
+                $groups[$k]['crates']++;
+            }
+            $groups[$k]['units'][$r['unit']] = ($groups[$k]['units'][$r['unit']] ?? 0.0) + $r['qty'];
+        }
+        if ($group === 'site') {
+            // within a site, item by item in the order they first appear
+            foreach ($groups as &$gr) {
+                usort($gr['rows'], fn($a, $b) => [$itemOrder[$a['code']], $a['_n']] <=> [$itemOrder[$b['code']], $b['_n']]);
+            }
+            unset($gr);
+        }
+        $groups = array_values($groups);
+        $flat = [];
+        foreach ($groups as $gr) {
+            foreach ($gr['rows'] as $r) {
+                $flat[] = $r;
+            }
         }
 
         // the names under the signature lines: a closing's own names; otherwise who recorded the transfer, and the van
         // salesman or cashier answerable for the site it went to
         $closing = TransferClosing::ready() ? DB::row("SELECT closing_no, transferred_by, received_by FROM transfer_closings WHERE transfer_txn_id = :t AND status = 'posted' LIMIT 1", ['t' => $id]) : null;
-        $from = (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => (int)$t['site_id']]);
+        $from = $many ? implode(', ', array_map(fn($x) => (string)($siteName[$x] ?? ''), array_keys($sites))) : (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => (int)$t['site_id']]);
         $to = (string)DB::value('SELECT name FROM sites WHERE id = :s', ['s' => (int)$t['site2_id']]);
         if ($closing) {
             $by = (string)$closing['transferred_by'];
@@ -108,8 +165,9 @@ final class TransferReceipt
         }
         return [
             'company' => (string)$s['company_name'], 'address' => (string)$s['company_address'], 'title' => $dispatch ? 'INVENTORY DISPATCH' : 'INVENTORY TRANSFER',
-            'txn_no' => (string)$t['txn_no'], 'voided' => (int)$t['is_voided'] === 1, 'info' => $info, 'rows' => $rows,
+            'txn_no' => (string)$t['txn_no'], 'voided' => (int)$t['is_voided'] === 1, 'info' => $info, 'rows' => $flat,
             'crates' => $crateCount, 'units' => $units, 'lines' => count($lines),
+            'group' => $group, 'groups' => $groups, 'many' => $many, 'subtotals' => count($groups) > 1,
             'signs' => [[$dispatch ? 'Dispatched by:' : 'Transferred by:', $by], ['Received by:', $recv]],
             'printed' => 'Printed ' . date('m/d/Y h:i A') . ' by ' . (string)(Auth::user()['full_name'] ?? ''),
         ];
@@ -119,6 +177,32 @@ final class TransferReceipt
     public static function crateText(int $n): string
     {
         return $n . ($n === 1 ? ' crate' : ' crates');
+    }
+
+    /** v8: the item code column of a row: the item code, and the site's code when a dispatch came from many sites (by item code) */
+    public static function codeText(array $m, array $r): string
+    {
+        return $m['many'] && $m['group'] === 'item' && $r['site_code'] !== '' ? $r['code'] . ' ' . $r['site_code'] : $r['code'];
+    }
+
+    /**
+     * v8: the lines of a group's subtotal, laid out as the total is: [[left, right], ...] - "Subtotal FMWC" with its
+     * crates, then the total of each unit (9 crates, 112.35kg)
+     */
+    public static function subLines(array $g): array
+    {
+        $right = [];
+        if ($g['crates'] > 0) {
+            $right[] = self::crateText((int)$g['crates']);
+        }
+        foreach ($g['units'] as $u => $q) {
+            $right[] = self::qtyText((float)$q, (string)$u);
+        }
+        $out = [];
+        foreach ($right ?: ['0'] as $i => $r) {
+            $out[] = [$i === 0 ? 'Subtotal ' . $g['label'] : '', $r];
+        }
+        return $out;
     }
 
     // ------------------------------------------------------------------ the Bluetooth printer
@@ -148,8 +232,27 @@ final class TransferReceipt
         $o[] = ['op' => 'rule'];
         $o[] = ['op' => 'row', 'cells' => [['t' => 'Crate#', 'w' => $cw, 'b' => 1], ['t' => 'Item Code', 'w' => $kw, 'b' => 1], ['t' => 'Qty/Unit', 'w' => $qw, 'a' => 'r', 'b' => 1]]];
         $o[] = ['op' => 'rule'];
-        foreach ($m['rows'] as $r) {
-            $o[] = ['op' => 'row', 'cells' => [['t' => $r['crate'], 'w' => $cw, 'b' => 1], ['t' => $r['code'], 'w' => $kw], ['t' => self::qtyText($r['qty'], $r['unit']), 'w' => $qw, 'a' => 'r']]];
+        foreach ($m['groups'] as $gi => $g) {
+            if ($m['group'] === 'site') {
+                // the site's heading: its code and name
+                if ($gi > 0) {
+                    $o[] = ['op' => 'feed', 'n' => 1];
+                }
+                foreach (self::wrap(($g['site_code'] !== '' ? $g['site_code'] . ' ' : '') . $g['title'], $w) as $part) {
+                    $o[] = ['op' => 'text', 'text' => $part, 'bold' => 1];
+                }
+            }
+            foreach ($g['rows'] as $r) {
+                $o[] = ['op' => 'row', 'cells' => [['t' => $r['crate'], 'w' => $cw, 'b' => 1], ['t' => self::codeText($m, $r), 'w' => $kw], ['t' => self::qtyText($r['qty'], $r['unit']), 'w' => $qw, 'a' => 'r']]];
+            }
+            if ($m['subtotals']) {
+                foreach (self::subLines($g) as [$left, $right]) {
+                    $o[] = ['op' => 'row', 'cells' => [['t' => '', 'w' => $cw], ['t' => $left, 'w' => $kw, 'b' => 1], ['t' => $right, 'w' => $qw, 'a' => 'r', 'b' => 1]]];
+                }
+                if ($gi < count($m['groups']) - 1) {
+                    $o[] = ['op' => 'text', 'text' => str_repeat('-', $w)];
+                }
+            }
         }
         if (!$m['rows']) {
             $o[] = ['op' => 'text', 'text' => 'No items', 'align' => 'center'];
@@ -190,6 +293,11 @@ final class TransferReceipt
         foreach ($m['rows'] as $r) {
             $cw = max($cw, mb_strlen($r['crate']) + 1);
             $qw = max($qw, mb_strlen(self::qtyText($r['qty'], $r['unit'])) + 1);
+        }
+        foreach ($m['subtotals'] ? $m['groups'] : [] as $g) {
+            foreach (self::subLines($g) as [, $right]) {
+                $qw = max($qw, mb_strlen($right) + 1);
+            }
         }
         $cw = min($cw, 10);
         $qw = min($qw, 13);
@@ -291,13 +399,41 @@ final class TransferReceipt
                 $pdf->line($pad, $y, $pw - $pad, $y, 0.4, 0.6);
             }
             $y += 10;
-            foreach ($m['rows'] as $r) {
-                $qt = self::qtyText($r['qty'], $r['unit']);
-                $qw = $probe->textWidth($qt, 8);
-                $put($pad, $probe->fit($r['crate'], $cw - 3, 9, true), 9, true, 'L');
-                $put($pad + $cw, $probe->fit($r['code'], $inner - $cw - $qw - 4, 8, false), 8, false, 'L');
-                $put($qx, $qt, 8, false, 'R');
-                $y += 11;
+            foreach ($m['groups'] as $gi => $g) {
+                if ($m['group'] === 'site') {
+                    // the site's heading: its marker square, code and name
+                    if ($gi > 0) {
+                        $y += 4;
+                    }
+                    if ($pdf) {
+                        $pdf->fillRgb($pad, $y - 6.2, 5.5, 5.5, SiteMark::rgb((int)$g['site_id']));
+                    }
+                    $put($pad + 8, $probe->fit(($g['site_code'] !== '' ? $g['site_code'] . '  ' : '') . $g['title'], $inner - 8, 8.5, true), 8.5, true, 'L');
+                    $y += 11.5;
+                }
+                foreach ($g['rows'] as $r) {
+                    $qt = self::qtyText($r['qty'], $r['unit']);
+                    $qw = $probe->textWidth($qt, 8);
+                    $put($pad, $probe->fit($r['crate'], $cw - 3, 9, true), 9, true, 'L');
+                    $put($pad + $cw, $probe->fit(self::codeText($m, $r), $inner - $cw - $qw - 4, 8, false), 8, false, 'L');
+                    $put($qx, $qt, 8, false, 'R');
+                    $y += 11;
+                }
+                if ($m['subtotals']) {
+                    $y -= 2;
+                    if ($pdf) {
+                        $pdf->line($pad + $cw, $y, $pw - $pad, $y, 0.4, 0.55);
+                    }
+                    $y += 9;
+                    foreach (self::subLines($g) as [$left, $right]) {
+                        if ($left !== '') {
+                            $put($pad + $cw, $probe->fit($left, $inner - $cw - $probe->textWidth($right, 8, true) - 4, 8, true), 8, true, 'L');
+                        }
+                        $put($qx, $right, 8, true, 'R');
+                        $y += 10.5;
+                    }
+                    $y += 3;
+                }
             }
             if (!$m['rows']) {
                 $put($pw / 2, 'No items', 8, false, 'C');
@@ -345,7 +481,8 @@ final class TransferReceipt
 
     public static function render(array $t, string $pageKey): void
     {
-        $m = self::model($t);
+        $m = self::model($t, self::group());
+        $byUrl = fn(string $gname): string => Txn::url($t, 'receipt') . '&group=' . $gname;
         $mm = Receipt::width() <= 32 ? 58 : 80;
         $btOn = Receipt::btEnabled();
         $kind = Txn::label((string)$t['txn_type']);
@@ -357,8 +494,15 @@ final class TransferReceipt
           <div class="tr-slip-actions">
             <button class="btn btn-primary btn-sm" type="button" onclick="window.print()" autofocus><i class="bi bi-printer"></i> Print</button>
             <?php if ($btOn): ?><button class="btn btn-outline-primary btn-sm" type="button" data-bt-print data-bt-ops="#btTransfer"><i class="bi bi-bluetooth"></i> Bluetooth printer</button><?php endif; ?>
-            <a class="btn btn-outline-primary btn-sm" href="<?= h(Txn::url($t, 'receipt') . '&pdf=1') ?>"><i class="bi bi-file-earmark-pdf"></i> Save as PDF</a>
+            <a class="btn btn-outline-primary btn-sm" href="<?= h($byUrl($m['group']) . '&pdf=1') ?>"><i class="bi bi-file-earmark-pdf"></i> Save as PDF</a>
             <a class="btn btn-outline-secondary btn-sm" href="<?= h(Txn::url($t)) ?>">Back</a>
+          </div>
+          <div class="tr-slip-group" role="group" aria-label="Lay the slip out by">
+            <span class="tr-slip-group-label">Group by</span>
+            <div class="tr-slip-seg">
+              <a class="<?= $m['group'] === 'item' ? 'is-on' : '' ?>" href="<?= h($byUrl('item')) ?>"<?= $m['group'] === 'item' ? ' aria-current="true"' : '' ?>><i class="bi bi-upc"></i> Item code</a>
+              <a class="<?= $m['group'] === 'site' ? 'is-on' : '' ?>" href="<?= h($byUrl('site')) ?>"<?= $m['group'] === 'site' ? ' aria-current="true"' : '' ?>><i class="bi bi-geo-alt"></i> Site</a>
+            </div>
           </div>
           <?php if (!$btOn && Access::page('admin.settings')): ?><div class="tr-slip-hint">To print on a Bluetooth roll printer, switch it on (with the paper width) in <a href="<?= h(url('admin.settings')) ?>">Company, Security &amp; Closing Date</a>.</div><?php endif; ?>
         </div>
@@ -376,12 +520,18 @@ final class TransferReceipt
           </dl>
           <table class="tr-slip-table">
             <thead><tr><th>Crate#</th><th>Item Code</th><th class="num">Qty/Unit</th></tr></thead>
-            <tbody>
-            <?php foreach ($m['rows'] as $r): ?>
-              <tr><td class="tr-slip-crate"><?= h($r['crate']) ?></td><td class="tr-slip-code"><?= h($r['code']) ?></td><td class="num"><?= h(self::qtyText($r['qty'], $r['unit'])) ?></td></tr>
-            <?php endforeach; ?>
-            <?php if (!$m['rows']): ?><tr><td colspan="3" class="text-center">No items</td></tr><?php endif; ?>
+            <?php foreach ($m['groups'] as $g): ?>
+            <tbody class="tr-slip-grp">
+              <?php if ($m['group'] === 'site'): ?><tr class="tr-slip-grp-head"><td colspan="3"><?= SiteMark::html((int)$g['site_id']) ?><strong><?= h($g['site_code']) ?></strong> <?= h($g['title']) ?></td></tr><?php endif; ?>
+              <?php foreach ($g['rows'] as $r): ?>
+              <tr><td class="tr-slip-crate"><?= h($r['crate']) ?></td><td class="tr-slip-code"><?= h($r['code']) ?><?php if ($m['many'] && $m['group'] === 'item'): ?> <span class="tr-slip-site"><?= SiteMark::html((int)$r['site_id']) ?><?= h($r['site_code']) ?></span><?php endif; ?></td><td class="num"><?= h(self::qtyText($r['qty'], $r['unit'])) ?></td></tr>
+              <?php endforeach; ?>
+              <?php if ($m['subtotals']): foreach (self::subLines($g) as $si => [$left, $right]): ?>
+              <tr class="tr-slip-sub<?= $si === 0 ? ' is-first' : '' ?>"><td></td><td><?= h($left) ?></td><td class="num"><?= h($right) ?></td></tr>
+              <?php endforeach; endif; ?>
             </tbody>
+            <?php endforeach; ?>
+            <?php if (!$m['rows']): ?><tbody><tr><td colspan="3" class="text-center">No items</td></tr></tbody><?php endif; ?>
             <tfoot>
             <?php foreach (self::totalLines($m) as $i => $tl): ?><tr class="<?= $i === 0 ? 'is-first' : '' ?>"><td colspan="2"><?= $i === 0 ? 'Total' : '' ?></td><td class="num"><?= h($tl) ?></td></tr><?php endforeach; ?>
               <tr class="tr-slip-lines"><td colspan="2">Lines</td><td class="num"><?= count($m['rows']) ?></td></tr>

@@ -1198,7 +1198,8 @@ final class Crates
         if (!$rows) {
             return null;
         }
-        $k = $itemId . '#' . $key;
+        // v8: the kilos each group gives are counted per site (a dispatch may pack the same item at two sites)
+        $k = $itemId . '@' . $siteId . '#' . $key;
         $used['qty'][$k] = round(($used['qty'][$k] ?? 0.0) + $total, 4);
         if ($used['qty'][$k] > (float)$g['qty'] + self::EPS) {
             fail($label . ': only ' . self::fig($g['qty'], $unit) . ' ' . $unit . ' of ' . ($g['dated'] ? 'the group ' . $g['label'] : 'it') . ' is loose at ' . $site

@@ -777,6 +777,28 @@ function load_demo_data(): void
         }
     }
 
+    // ---------------------------------------------------------------- v8: a dispatch gathering stock from two sites into one
+    // (Dispatch Inventory, From sites: Naga Cold Storage and Legazpi Depot, To site: Reefer Truck 1), each crate going whole
+    // with its own number and dates
+    $rft = $site('RFT1');
+    if ($rft) {
+        Auth::actAs($user('invclerk') ?: $admin);
+        $dlines = [];
+        foreach ([[$nga, 'BRS-FZ', 1], [$lgz, 'NGT-500', 1], [$nga, 'WNG-FZ', 1]] as [$from, $code, $n]) {
+            $unit = Crates::crateUnit($item($code));
+            foreach ($pick($code, $from, $n) as $c) {
+                $cr = DB::row('SELECT production_date, expiry_date FROM crates WHERE id = :c', ['c' => $c['id']]);
+                $dlines[] = ['line_kind' => 'item', 'item_id' => $item($code), 'qty' => $c['qty'], 'description' => (string)DB::value('SELECT name FROM items WHERE code = :c', ['c' => $code]),
+                    'site_id' => $from, 'uom_id' => $unit['id'], 'unit' => $unit['code'], 'uom_qty' => 1, 'uom_factor' => round($c['qty'], 6),
+                    'production_date' => $cr['production_date'], 'expiry_date' => $cr['expiry_date'], '_crates' => ['dir' => 'move', 'rows' => [['id' => $c['id']]]]];
+            }
+        }
+        if ($dlines) {
+            Txn::save('inventory_dispatch', ['txn_date' => $d(0), 'site_id' => $nga, 'site2_id' => $rft, 'status' => 'open', 'memo' => 'Reefer run: the cold storage and the depot'], $dlines);
+        }
+        Auth::actAs($admin);
+    }
+
     // ---------------------------------------------------------------- security examples
     $salesrep = $user('salesrep');
     $arclerk = $user('arclerk');

@@ -1260,3 +1260,132 @@ tr.row-copied > td { animation: rowNew 1s ease-out; }
   .lc-groups td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--steel); }
   .lc-sources li a { flex: 1 1 auto; }
 }
+
+/* ================================================================= v8: many sites to one, site markers */
+.site-mark { --sm: #1f6f9f; display: inline-block; flex: 0 0 auto; width: .72rem; height: .72rem; border-radius: 3px; background: var(--sm); vertical-align: -.04em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .38), inset 0 -1px 0 rgba(0, 0, 0, .2), 0 1px 2px rgba(16, 42, 59, .28); }
+.sm-0 { --sm: #1f6f9f; } .sm-1 { --sm: #c27c0e; } .sm-2 { --sm: #2f8f5b; } .sm-3 { --sm: #7f4fb0; }
+.sm-4 { --sm: #c0453a; } .sm-5 { --sm: #138a8a; } .sm-6 { --sm: #6d7322; } .sm-7 { --sm: #b14f86; }
+.site-tag { display: inline-flex; align-items: center; gap: .42rem; min-width: 0; max-width: 100%; }
+.site-tag > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* From sites: the sites ticked, their markers on the button */
+.ds-sites-btn { display: flex; align-items: center; gap: .5rem; width: 100%; text-align: left; white-space: nowrap; overflow: hidden; }
+.ds-sites-marks { display: inline-flex; gap: 3px; flex: 0 0 auto; }
+.ds-sites-marks:empty { display: none; }
+.ds-sites-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ds-sites-menu { min-width: 100%; width: max(100%, 19rem); padding: .4rem; border-radius: var(--radius); border-color: var(--line); box-shadow: var(--lift-2); }
+.ds-sites-head { padding: .3rem .55rem .4rem; font-size: .78rem; color: var(--steel); }
+.ds-site-opt { display: flex; align-items: center; gap: .55rem; margin: 0; padding: .48rem .55rem; border-radius: var(--radius-sm); cursor: pointer; font-size: .9rem; color: var(--ink); }
+.ds-site-opt:hover { background: var(--panel-2); }
+.ds-site-opt .form-check-input { flex: 0 0 auto; margin: 0; }
+.ds-site-opt:has(input:checked) { background: var(--cold-tint); }
+.ds-site-name { flex: 1 1 auto; min-width: 0; }
+.ds-site-note { font-size: .75rem; color: var(--steel-2); }
+.ds-site-opt.is-to { cursor: not-allowed; opacity: .62; background: none; }
+.ds-sites-foot { display: flex; justify-content: space-between; gap: .5rem; margin-top: .3rem; padding-top: .3rem; border-top: 1px solid var(--line-soft); }
+.ds-sites-foot .btn-link { font-size: .82rem; text-decoration: none; padding: .2rem .4rem; }
+
+/* the From site of each line, under its item (when the stock comes from two sites or more) */
+#dsTable > thead th:first-child, #dsTable > tbody > tr.tr-main > td:first-child { min-width: 14rem; }
+#dsTable:not(.ds-many) .ds-site-pick, #dsTable:not(.ds-many) .ds-site-h { display: none; }
+.ds-site-pick { position: relative; display: flex; align-items: center; margin-top: .3rem; }
+.ds-site-pick .site-mark { position: absolute; left: .62rem; z-index: 1; pointer-events: none; }
+.ds-site-pick .ds-site { padding-left: 1.8rem; width: 100%; }
+tr.ds-just-added > td { animation: ds-added 1.4s var(--ease); }
+@keyframes ds-added { 0% { background-color: var(--cold-tint); } 100% { background-color: transparent; } }
+
+/* Stock at the sites */
+.ds-stock { overflow: hidden; }
+.ds-stock-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; padding: .8rem 1rem;
+  border-bottom: 1px solid var(--line-soft); background: linear-gradient(180deg, var(--panel), var(--panel-2)); }
+.ds-stock.is-closed .ds-stock-head { border-bottom: 0; }
+.ds-stock-title { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem 1.1rem; min-width: 0; }
+.ds-stock-title h2 { margin: 0; font-family: var(--font-title); font-size: 1.04rem; font-weight: 600; color: var(--ink); }
+.ds-stock-legend { display: flex; flex-wrap: wrap; gap: .15rem 1rem; }
+.ds-legend-item { display: inline-flex; align-items: center; gap: .42rem; padding: .15rem 0; border: 0; background: none; font-size: .85rem; color: var(--ink-2); cursor: pointer; }
+.ds-legend-item:hover .ds-legend-name { text-decoration: underline; text-underline-offset: 2px; }
+.ds-legend-item:focus-visible { outline: 2px solid var(--cold); outline-offset: 3px; border-radius: 4px; }
+.ds-legend-n { font-size: .78rem; color: var(--steel-2); font-variant-numeric: tabular-nums; }
+.ds-legend-item.is-off { color: var(--steel-2); }
+.ds-legend-item.is-off .site-mark { background: transparent; box-shadow: inset 0 0 0 2px var(--sm); }
+.ds-legend-item.is-off .ds-legend-name { text-decoration: line-through; }
+.ds-stock-tools { display: flex; align-items: center; gap: .5rem; }
+.ds-stock-search { position: relative; }
+.ds-stock-search .bi { position: absolute; left: .62rem; top: 50%; transform: translateY(-50%); font-size: .85rem; color: var(--steel-2); pointer-events: none; }
+.ds-stock-search input { width: 17rem; padding-left: 1.85rem; }
+.ds-stock-toggle { display: inline-flex; align-items: center; gap: .35rem; }
+.ds-stock-body { max-height: 22.5rem; overflow: auto; transition: opacity .2s var(--ease); }
+.ds-stock-body.is-loading { opacity: .55; }
+.ds-stock-table { --bs-table-bg: transparent; }
+.ds-stock-table thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); box-shadow: inset 0 -1px 0 var(--line-soft); }
+.ds-stock-table td { vertical-align: middle; }
+.ds-stock-table tbody tr.is-first:not(:first-child) td { border-top: 1px solid var(--line); }
+.ds-stock-table small { font-size: .76rem; color: var(--steel); }
+.ds-stock-item strong { margin-right: .45rem; font-weight: 600; }
+.ds-stock-item span { color: var(--steel); }
+.ds-exp { margin-right: .45rem; font-variant-numeric: tabular-nums; }
+.ds-exp-days { font-size: .78rem; color: var(--steel); }
+.ds-stock-table .lot-expiring-row .ds-exp-days { color: var(--warn); font-weight: 600; }
+.ds-stock-table .lot-expired-row .ds-exp-days { color: var(--bad); font-weight: 600; }
+.ds-stock-act { width: 1%; text-align: right; white-space: nowrap; }
+.ds-stock-act .btn { display: inline-flex; align-items: center; gap: .3rem; }
+.ds-stock-empty { padding: 1rem 1.1rem; font-size: .88rem; color: var(--steel); }
+.ds-stock-more { padding: .55rem 1rem; font-size: .8rem; color: var(--steel); border-top: 1px solid var(--line-soft); }
+
+/* the total, and what each site gives */
+.ds-lines .ds-total { justify-content: space-between; align-items: flex-end; gap: .5rem 1.5rem; }
+.ds-total-sites { display: grid; gap: .25rem; font-size: .85rem; }
+.ds-total-sites:empty { display: none; }
+.ds-total-site { display: flex; align-items: center; gap: .45rem; }
+.ds-total-site-name { color: var(--steel); }
+.ds-total-site-q { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ds-total-all { display: flex; align-items: baseline; gap: .75rem; margin-left: auto; }
+
+@media (max-width: 767.98px) {
+  .ds-stock-head { padding: .75rem .8rem; }
+  .ds-stock-tools { width: 100%; }
+  .ds-stock-search { flex: 1 1 auto; }
+  .ds-stock-search input { width: 100%; }
+  .ds-stock-body { max-height: 28rem; }
+  /* the stock rows as small cards: the site and the item, the figures under them, Add on the right */
+  .ds-stock-table thead { display: none; }
+  .ds-stock-table, .ds-stock-table tbody { display: block; width: 100%; }
+  .ds-stock-table tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; gap: .3rem .8rem; padding: .7rem .8rem; border-bottom: 1px solid var(--line-soft); }
+  .ds-stock-table tbody tr.is-first:not(:first-child) { border-top: 1px solid var(--line); }
+  .ds-stock-table tbody td { display: block; padding: 0; border: 0 !important; text-align: left; min-width: 0; }
+  .ds-stock-table td[data-label="Site"] { grid-column: 1 / 3; grid-row: 1; font-size: .84rem; }
+  .ds-stock-table td.ds-stock-item { grid-column: 1 / 3; grid-row: 2; }
+  .ds-stock-table td.ds-stock-item span { display: block; font-size: .84rem; }
+  .ds-stock-table td.ds-stock-act { grid-column: 3; grid-row: 1 / span 2; align-self: center; width: auto; }
+  .ds-stock-table td.num, .ds-stock-table td.ds-stock-exp { font-size: .86rem; }
+  .ds-stock-table td.num::before, .ds-stock-table td.ds-stock-exp::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--steel); }
+  .ds-stock-table td.ds-stock-exp { grid-column: span 2; }
+  .ds-stock-table .ds-exp-days { display: block; }
+  .ds-total-all { margin-left: 0; width: 100%; justify-content: space-between; }
+}
+@media (max-width: 575.98px) {
+  #dsTable > tbody > tr.tr-main > td:first-child { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) { tr.ds-just-added > td { animation: none; } }
+
+/* v8: the transfer slip, by item code or by site, with subtotals */
+.tr-slip-group { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; padding-top: .55rem; border-top: 1px solid var(--line-soft); }
+.tr-slip-group-label { font-size: .82rem; color: var(--steel); }
+.tr-slip-seg { display: inline-flex; padding: 3px; gap: 3px; border-radius: var(--radius-sm); background: var(--panel-2); box-shadow: var(--sunk); }
+.tr-slip-seg a { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .75rem; border-radius: 5px; font-size: .84rem; font-weight: 500; color: var(--ink-2); text-decoration: none; }
+.tr-slip-seg a:hover { color: var(--cold); }
+.tr-slip-seg a.is-on { background: var(--panel); color: var(--cold-deep); font-weight: 600; box-shadow: var(--lift-1); }
+.tr-slip-seg a:focus-visible { outline: 2px solid var(--cold); outline-offset: 1px; }
+.tr-slip-site { display: inline-flex; align-items: center; gap: 3px; margin-left: .25rem; font-size: .86em; white-space: nowrap; }
+.tr-slip-site .site-mark, .tr-slip-grp-head .site-mark { width: .6rem; height: .6rem; box-shadow: none; }
+.tr-slip-grp-head td { padding-top: 6px !important; font-size: 1.02em; }
+.tr-slip-grp-head .site-mark { margin-right: .35rem; vertical-align: 0; }
+.tbody-first .tr-slip-grp-head td { padding-top: 2px !important; }
+.tr-slip-table tbody.tr-slip-grp + tbody.tr-slip-grp tr:first-child td { border-top: 1px dotted #777; }
+.tr-slip-sub td { font-weight: 700; padding-top: 0 !important; }
+.tr-slip-sub.is-first td { padding-top: 3px !important; }
+.tr-slip-sub.is-first td:nth-child(2), .tr-slip-sub.is-first td:nth-child(3) { border-top: 1px solid #999; }
+.site-list { display: flex; flex-direction: column; gap: .2rem; }
+.site-list.site-list-tight { gap: .1rem; font-size: .92em; }
+@media print { .tr-slip-group { display: none !important; } .tr-slip-site .site-mark, .tr-slip-grp-head .site-mark { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }

@@ -435,7 +435,7 @@ function txn_common_actions(string $pageKey, array $types): bool
             }
             Audit::log('print', Txn::module($t['txn_type']), 'transaction', $id, Txn::ref($t), ['page_key' => $pageKey, 'reason' => g('pdf') === '1' ? 'POS receipt saved as PDF' : 'POS receipt']);
             if (g('pdf') === '1') {
-                TransferReceipt::pdf(TransferReceipt::model($t))->download(($t['txn_type'] === 'inventory_dispatch' ? 'Inventory_Dispatch_' : 'Inventory_Transfer_') . ($t['txn_no'] ?: $id) . '.pdf');
+                TransferReceipt::pdf(TransferReceipt::model($t, TransferReceipt::group()))->download(($t['txn_type'] === 'inventory_dispatch' ? 'Inventory_Dispatch_' : 'Inventory_Transfer_') . ($t['txn_no'] ?: $id) . '.pdf');
             }
             TransferReceipt::render($t, $pageKey);
             return true;
@@ -863,7 +863,11 @@ function render_txn_view(array $t, string $pageKey): void
         $info['Payment method'] = h(DB::value('SELECT name FROM payment_methods WHERE id = :id', ['id' => $t['payment_method_id']]));
     }
     if ($type === 'inventory_transfer' || $type === 'inventory_dispatch') {
-        $info['From site'] = h($site);
+        // v8: a dispatch may come from many sites: each with its marker
+        $fromIds = txn_from_sites($t);
+        $info[count($fromIds) > 1 ? 'From sites' : 'From site'] = count($fromIds) > 1
+            ? '<span class="site-list">' . implode('', array_map(fn($x) => SiteMark::html($x, (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $x])), $fromIds)) . '</span>'
+            : h($site);
         $info['To site'] = h($t['site2_id'] ? (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $t['site2_id']]) : '');
     } elseif ($site) {
         $info['Site'] = h($site);
@@ -896,8 +900,8 @@ function render_txn_view(array $t, string $pageKey): void
             <?php $lineClasses = (bool)array_filter($lines, fn($x) => !empty($x['class_id'])); ?>
             <?php if (is_journal_style($type) || $type === 'deposit'): ?>
               <th>Account</th><th>Description</th><th>Name</th><?php if ($lineClasses): ?><th>Class</th><?php endif; ?><th class="num">Debit</th><th class="num">Credit</th>
-            <?php elseif ($stockMove): ?>
-              <th>Item</th><th>Description</th><th class="num">Qty</th>
+            <?php elseif ($stockMove): $manyFrom = count(txn_from_sites($t)) > 1; $lineSiteNames = $manyFrom ? DB::pairs('SELECT id, name FROM sites') : []; ?>
+              <th>Item</th><?php if ($manyFrom): ?><th>From site</th><?php endif; ?><th>Description</th><th class="num">Qty</th>
             <?php else: ?>
               <th>Item / Account</th><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Disc</th><th class="num">Amount</th><th>Tax</th>
               <?php if (in_array($type, ['sales_order', 'purchase_order'], true)): ?><th class="num"><?= $type === 'sales_order' ? 'Invoiced' : 'Received' ?></th><?php endif; ?>
@@ -918,6 +922,7 @@ function render_txn_view(array $t, string $pageKey): void
             <?php else: ?>
               <tr class="<?= (int)$l['is_closed'] ? 'text-muted' : '' ?>">
                 <td><?= h($l['item_code'] ?: ($l['account_code'] ? $l['account_code'] . ' - ' . $l['account_name'] : '')) ?><?= $l['line_kind'] === 'component' ? ' <span class="badge text-bg-light">component</span>' : '' ?></td>
+                <?php if (!empty($manyFrom)): $ls = (int)($l['site_id'] ?: $t['site_id']); ?><td class="text-nowrap"><?= SiteMark::html($ls, $lineSiteNames[$ls] ?? '') ?></td><?php endif; ?>
                 <td><?= h($l['description']) ?><?= !empty($l['_group']) ? '<div class="small text-muted group-members">Item group: ' . h(implode(', ', array_map(fn($m) => qty($m['qty']) . ' ' . ($m['item_code'] ?: $m['description']), $l['_members']))) . '</div>'
                     : (!empty($l['group_ref']) && !empty($l['group_item_id']) ? '<div class="small text-muted">In item group ' . h((string)(item_cache((int)$l['group_item_id'])['code'] ?? '')) . '</div>' : '') ?><?= (int)$l['is_billable'] ? ' <span class="badge text-bg-info">billable</span>' : '' ?><?= $l['billed_txn_id'] ? ' <span class="small">billed on ' . Txn::link((int)$l['billed_txn_id']) . '</span>' : '' ?><?= !empty($l['id']) && isset($lotNotes[(int)$l['id']]) ? '<div class="small lot-note"><i class="bi bi-calendar2-week"></i> ' . h($lotNotes[(int)$l['id']]) . '</div>' : '' ?><?= !empty($l['id']) && isset($crateNotes[(int)$l['id']]) ? '<div class="small crate-note"><i class="bi bi-boxes"></i> ' . h($crateNotes[(int)$l['id']]) . '</div>' : '' ?></td>
                 <td class="num"><?= $l['item_type'] === 'subtotal' ? '' : line_qty($l) ?></td>
@@ -1185,6 +1190,22 @@ function print_signatures(array $t, bool $received = false): string
         . '</div>';
 }
 
+/**
+ * v8: the sites a transfer or dispatch takes its stock from, in the order of its lines (a dispatch may gather stock
+ * from many sites; its own site comes first when no line names one)
+ */
+function txn_from_sites(array $t): array
+{
+    $ids = [];
+    if (($t['txn_type'] ?? '') === 'inventory_dispatch') {
+        foreach (DB::all('SELECT site_id FROM transaction_lines WHERE txn_id = :t AND item_id IS NOT NULL ORDER BY line_no, id', ['t' => (int)$t['id']]) as $r) {
+            $ids[] = (int)($r['site_id'] ?: $t['site_id']);
+        }
+    }
+    $ids = array_values(array_unique(array_filter($ids)));
+    return $ids ?: array_filter([(int)($t['site_id'] ?? 0)]);
+}
+
 function print_site_name(array $t): string
 {
     return !empty($t['site_id']) ? (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $t['site_id']]) : '';
@@ -1359,7 +1380,8 @@ function txn_print_body(array $t): void
       <div class="row mb-3">
         <?php if ($type === 'inventory_transfer' || $type === 'inventory_dispatch'): $toSite = $t['site2_id'] ? (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $t['site2_id']]) : ''; ?>
         <div class="col-6">
-          <div class="small text-muted">From site</div><strong><?= h(print_site_name($t)) ?></strong>
+          <?php $pFrom = txn_from_sites($t); ?>
+          <div class="small text-muted"><?= count($pFrom) > 1 ? 'From sites' : 'From site' ?></div><strong><?= count($pFrom) > 1 ? h(implode(', ', array_map(fn($x) => (string)DB::value('SELECT name FROM sites WHERE id = :id', ['id' => $x]), $pFrom))) : h(print_site_name($t)) ?></strong>
           <div class="small text-muted mt-2">To site</div><strong><?= h($toSite) ?></strong>
         </div>
         <div class="col-6">
@@ -1387,16 +1409,16 @@ function txn_print_body(array $t): void
           <div class="small">Memo: <?= h($t['memo']) ?></div>
         </div>
       <?php endif; ?>
-      <?php $qtyOnly = in_array($type, ['inventory_transfer', 'inventory_dispatch', 'build_assembly'], true); ?>
+      <?php $qtyOnly = in_array($type, ['inventory_transfer', 'inventory_dispatch', 'build_assembly'], true); $pMany = $qtyOnly && count(txn_from_sites($t)) > 1; $pSites = $pMany ? DB::pairs('SELECT id, name FROM sites') : []; ?>
       <?php if ($lines && !in_array($type, ['bill_payment'], true)): ?>
       <table class="table table-sm">
-        <thead><tr><th>Item</th><th>Description</th><th class="num">Qty</th><?php if (!$qtyOnly): ?><th class="num">Rate</th><th class="num">Amount</th><?php endif; ?></tr></thead>
+        <thead><tr><th>Item</th><?php if ($pMany): ?><th>From site</th><?php endif; ?><th>Description</th><th class="num">Qty</th><?php if (!$qtyOnly): ?><th class="num">Rate</th><th class="num">Amount</th><?php endif; ?></tr></thead>
         <tbody>
         <?php $qtySum = 0.0; $lotNotes = lot_notes((int)$t['id']); $crateNotes = crate_notes((int)$t['id']); foreach ($lines as $l): if ($l['line_kind'] === 'component') { continue; } $qtySum += (float)$l['qty']; ?>
-          <tr><td><?= h($l['item_code'] ?: $l['account_name']) ?></td><td><?= h($l['description']) ?><?= line_discount($l) !== '' && $l['item_type'] !== 'discount' ? ' (less ' . line_discount($l) . ')' : '' ?><?= isset($lotNotes[(int)$l['id']]) ? '<div class="small lot-note">' . h($lotNotes[(int)$l['id']]) . '</div>' : '' ?><?= isset($crateNotes[(int)$l['id']]) ? '<div class="small crate-note">' . h($crateNotes[(int)$l['id']]) . '</div>' : '' ?></td>
+          <tr><td><?= h($l['item_code'] ?: $l['account_name']) ?></td><?php if ($pMany): ?><td><?= h($pSites[(int)($l['site_id'] ?: $t['site_id'])] ?? '') ?></td><?php endif; ?><td><?= h($l['description']) ?><?= line_discount($l) !== '' && $l['item_type'] !== 'discount' ? ' (less ' . line_discount($l) . ')' : '' ?><?= isset($lotNotes[(int)$l['id']]) ? '<div class="small lot-note">' . h($lotNotes[(int)$l['id']]) . '</div>' : '' ?><?= isset($crateNotes[(int)$l['id']]) ? '<div class="small crate-note">' . h($crateNotes[(int)$l['id']]) . '</div>' : '' ?></td>
             <td class="num"><?= $l['item_type'] === 'subtotal' ? '' : line_qty($l) ?></td><?php if (!$qtyOnly): ?><td class="num"><?= line_rate($l) ?></td><td class="num"><?= money($l['amount']) ?></td><?php endif; ?></tr>
         <?php endforeach; ?>
-        <?php if ($qtyOnly): ?><tr class="fw-semibold"><td colspan="2">Total quantity</td><td class="num"><?= qty($qtySum) ?></td></tr><?php endif; ?>
+        <?php if ($qtyOnly): ?><tr class="fw-semibold"><td colspan="<?= $pMany ? 3 : 2 ?>">Total quantity</td><td class="num"><?= qty($qtySum) ?></td></tr><?php endif; ?>
         </tbody>
       </table>
       <?php endif; ?>
@@ -1497,12 +1519,20 @@ function render_txn_list(string $pageKey, array $types, string $title, array $op
     $siteCols = !empty($opt['site_cols']);
     $siteNames = $siteCols ? DB::pairs('SELECT id, name FROM sites') : [];
     $qtyOf = $siteCols ? DB::pairs('SELECT txn_id, SUM(qty) FROM transaction_lines WHERE txn_id IN (' . (implode(',', array_map(fn($r) => (int)$r['id'], $rows)) ?: '0') . ') GROUP BY txn_id') : [];
+    // v8: a dispatch from many sites lists each of them
+    $fromOf = [];
+    if ($siteCols && in_array('inventory_dispatch', $types, true) && $rows) {
+        foreach (DB::all('SELECT txn_id, site_id FROM transaction_lines WHERE txn_id IN (' . implode(',', array_map(fn($r) => (int)$r['id'], $rows)) . ') AND item_id IS NOT NULL AND site_id IS NOT NULL ORDER BY txn_id, line_no, id') as $fl) {
+            $fromOf[(int)$fl['txn_id']][(int)$fl['site_id']] = true;
+        }
+    }
+    $fromIds = fn(array $r): array => isset($fromOf[(int)$r['id']]) && count($fromOf[(int)$r['id']]) > 1 ? array_keys($fromOf[(int)$r['id']]) : [(int)$r['site_id']];
 
     if (g('export') === 'csv' && Access::can($pageKey, 'print')) {
         Audit::log('export', explode('.', $pageKey)[0], 'list', null, $title, ['page_key' => $pageKey]);
         if ($siteCols) {
             csv_download(preg_replace('/\W+/', '_', strtolower($title)) . '.xlsx', ['Date', 'Number', 'From site', 'To site', 'Reference', 'Memo', 'Class', 'Quantity', 'Status'], array_map(fn($r) => [
-                $r['txn_date'], $r['txn_no'], $siteNames[$r['site_id']] ?? '', $siteNames[$r['site2_id']] ?? '', $r['ref_no'], $r['memo'], Classes::name($r['class_id'] ?? null), $qtyOf[$r['id']] ?? 0, $r['status'],
+                $r['txn_date'], $r['txn_no'], implode(', ', array_map(fn($x) => $siteNames[$x] ?? '', $fromIds($r))), $siteNames[$r['site2_id']] ?? '', $r['ref_no'], $r['memo'], Classes::name($r['class_id'] ?? null), $qtyOf[$r['id']] ?? 0, $r['status'],
             ], $rows), $title);
         }
         csv_download(preg_replace('/\W+/', '_', strtolower($title)) . '.xlsx', ['Date', 'Type', 'Number', 'Name', 'Reference', 'Class', 'Total', 'Status'], array_map(fn($r) => [
@@ -1559,7 +1589,7 @@ function render_txn_list(string $pageKey, array $types, string $title, array $op
           <?php if (count($types) > 1): ?><td><?= h(Txn::label($r['txn_type'])) ?></td><?php endif; ?>
           <td><a href="<?= h(!empty($opt['own_link']) ? Txn::url($r) : url($pageKey, ['a' => 'view', 'id' => $r['id']])) ?>"><?= h($r['txn_no'] ?: '#' . $r['id']) ?></a><?= Attachments::clip($attCounts[(int)$r['id']] ?? 0) ?></td>
           <?php if ($siteCols): ?>
-            <td><?= h($siteNames[$r['site_id']] ?? '') ?></td><td><i class="bi bi-arrow-right-short text-muted"></i> <?= h($siteNames[$r['site2_id']] ?? '') ?></td>
+            <td><?php $fi = $fromIds($r); if (count($fi) > 1): ?><span class="site-list site-list-tight"><?php foreach ($fi as $x): ?><?= SiteMark::html($x, $siteNames[$x] ?? '') ?><?php endforeach; ?></span><?php else: ?><?= h($siteNames[$r['site_id']] ?? '') ?><?php endif; ?></td><td><i class="bi bi-arrow-right-short text-muted"></i> <?= h($siteNames[$r['site2_id']] ?? '') ?></td>
           <?php else: ?>
             <td><?= h(($r['parent_name'] ? $r['parent_name'] . ':' : '') . $r['party']) ?></td>
           <?php endif; ?>

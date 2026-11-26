@@ -148,6 +148,9 @@ final class Schema
         // distribution v5: Production and Expiry Dates (the check of the stock's dates, and date changes)
         'database/migrations/2027_04_05_production_expiry_dates.sql' =>
             ['SELECT COUNT(*) FROM pages WHERE page_key = \'inv.lot_check\'', 1],
+        // distribution v8: Dispatch Inventory from many sites, and the Transfer Reports
+        'database/migrations/2027_04_19_transfer_reports.sql' =>
+            ['SELECT COUNT(*) FROM pages WHERE page_key IN (\'rpt.transfer_item\', \'rpt.transfer_site\')', 2],
     ];
 
     private static ?array $pending = null;

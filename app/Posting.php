@@ -680,6 +680,8 @@ final class Posting
         if (!$from || !$to || $from === $to) {
             fail('Choose two different sites for the transfer.');
         }
+        // v8: a dispatch may gather stock from many sites into one: each of its lines leaves from its own site
+        $perLine = ($this->t['txn_type'] ?? '') === 'inventory_dispatch';
         // v31: stock moved between sites is not a new receipt: an item below zero at all sites keeps its shortfall
         Stock::$settleShortfall = false;
         try {
@@ -687,8 +689,12 @@ final class Posting
                 if (!Stock::isTracked($l['item_type']) || abs((float)$l['qty']) <= 0) {
                     continue;
                 }
+                $src = $perLine ? ((int)($l['site_id'] ?? 0) ?: $from) : $from;
+                if ($src === $to) {
+                    fail('A line of the dispatch leaves from the site it goes to. Choose another From site on the line.');
+                }
                 $q = abs((float)$l['qty']);
-                $value = Stock::move((int)$this->t['id'], (int)$l['id'], $this->t['txn_date'], (int)$l['item_id'], $from, -$q);
+                $value = Stock::move((int)$this->t['id'], (int)$l['id'], $this->t['txn_date'], (int)$l['item_id'], $src, -$q);
                 // v43: the stock arrives in the same production / expiry date groups it left in
                 Stock::move((int)$this->t['id'], (int)$l['id'], $this->t['txn_date'], (int)$l['item_id'], $to, $q, null, 0.0, -$value, Stock::$lastLots);
                 $this->setLineCost((int)$l['id'], -$value);

@@ -363,7 +363,7 @@ final class LotCheck
     {
         $rows = DB::all(
             "SELECT m.txn_id, t.txn_type, t.txn_no, t.txn_date, t.account_id, t.site_id, t.site2_id, t.received_via, SUM(m.qty) AS q,
-                    MAX(l.production_date) AS lp, MAX(l.expiry_date) AS le
+                    MAX(l.production_date) AS lp, MAX(l.expiry_date) AS le, GROUP_CONCAT(DISTINCT l.site_id) AS lsites
                FROM inventory_movements m JOIN transactions t ON t.id = m.txn_id LEFT JOIN transaction_lines l ON l.id = m.txn_line_id
               WHERE m.item_id = :i AND m.site_id = :s AND m.qty > 0 AND m.production_date IS NULL AND m.expiry_date IS NULL
               GROUP BY m.txn_id, t.txn_type, t.txn_no, t.txn_date, t.account_id, t.site_id, t.site2_id, t.received_via
@@ -419,7 +419,9 @@ final class LotCheck
             } elseif ($type === 'opening_balance' || ($type === 'inventory_adjustment' && (int)$r['account_id'] === $opening)) {
                 $why = 'Opening quantity entered without dates';
             } elseif (in_array($type, ['inventory_transfer', 'inventory_dispatch'], true)) {
-                $why = 'Arrived from ' . ($sites[(int)$r['site_id']] ?? 'another site') . ' in stock that had no dates there';
+                // v8: a dispatch may have gathered it from many sites: the sites of its lines
+                $from = array_filter(array_map('intval', explode(',', (string)($r['lsites'] ?? ''))), fn($x) => $x && $x !== $siteId) ?: [(int)$r['site_id']];
+                $why = 'Arrived from ' . implode(' and ', array_map(fn($x) => $sites[$x] ?? 'another site', $from)) . ' in stock that had no dates there';
             } elseif (in_array($type, ['credit_memo', 'pos_return'], true)) {
                 $why = 'Returned by a customer without dates';
             } elseif (in_array($type, ['build_assembly', Processing::TXN_TYPE], true)) {

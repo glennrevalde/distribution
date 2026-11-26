@@ -297,7 +297,7 @@ function seed_master_data(): void
                 'vend.receive_items' => 'CEP', 'vend.purchase_orders' => 'P', 'vend.pickup' => 'CEP', 'vend.allocations' => 'P', 'vend.supplier_items' => 'P',
                 'inv.crates' => 'P', 'inv.crate_convert' => 'CP', 'inv.crate_pack' => 'CP', 'inv.crate_move' => 'CP', 'group:Crate Reports' => 'P', 'rpt.alloc_pickup' => 'P',
                 'inv.dispatch' => 'CEP',
-                'inv.transfer_closing' => 'CP', 'inv.shortages' => 'P', 'group:Shortage and Shrinkage Reports' => 'P',
+                'inv.transfer_closing' => 'CP', 'inv.shortages' => 'P', 'group:Shortage and Shrinkage Reports' => 'P', 'group:Transfer Reports' => 'P',
                 'rpt.qoh_by_site' => 'P', 'rpt.stock_status_item' => 'P', 'rpt.stock_status_vendor' => 'P', 'rpt.stock_status_site' => 'P',
                 'rpt.physical_worksheet' => 'P', 'rpt.pending_builds' => 'P', 'rpt.pending_builds_site' => 'P', 'rpt.negative_inventory' => 'P', 'rpt.inv_no_movement' => 'P',
                 'rpt.inv_movement_summary' => 'P', 'rpt.inv_movement_detail' => 'P', 'rpt.inv_movement_txns' => 'P',

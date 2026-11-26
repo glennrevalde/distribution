@@ -362,3 +362,169 @@ Report::define('alloc_pickup', [
         ];
     },
 ]);
+
+// ---------------------------------------------------------------------------------------------------- v8: transfers
+
+/**
+ * v8: the stock sent out by Transfer Inventory and Dispatch Inventory (a dispatch may gather it from many sites), one
+ * row per document line, site and date group it left: where it left from, where it went, its production and expiry
+ * dates, how many days it had left when it was sent, the crates and the quantity. Filters: dates, the site it left
+ * (Site), the site it went to, the item, and which documents.
+ */
+function dist_transfer_rows(array $f): array
+{
+    [$sf, $sp] = Access::siteFilter('m.site_id', 'tm');
+    $p = $sp + ['f' => $f['from'], 't' => $f['to']];
+    $types = ($f['doc'] ?? '') === 'dispatch' ? "('inventory_dispatch')" : (($f['doc'] ?? '') === 'transfer' ? "('inventory_transfer')" : "('inventory_transfer', 'inventory_dispatch')");
+    $w = "t.txn_type IN $types AND t.is_voided = 0 AND m.qty < 0 AND t.txn_date BETWEEN :f AND :t";
+    if ($f['site_id']) {
+        $w .= ' AND m.site_id = :s';
+        $p['s'] = $f['site_id'];
+    }
+    if ((int)($f['to_site'] ?? 0) > 0) {
+        $w .= ' AND t.site2_id = :s2';
+        $p['s2'] = (int)$f['to_site'];
+    }
+    if ($f['item_id']) {
+        $w .= ' AND m.item_id = :i';
+        $p['i'] = $f['item_id'];
+    }
+    $rows = DB::all("SELECT m.txn_id, m.txn_line_id, t.txn_type, t.txn_no, t.txn_date, m.site_id, t.site2_id, m.item_id, i.code, i.name,
+                            COALESCE(NULLIF(us.base_unit, ''), NULLIF(i.unit, ''), '') AS unit, m.production_date AS p, m.expiry_date AS e,
+                            -SUM(m.qty) AS q, -SUM(m.total_cost) AS v
+                       FROM inventory_movements m JOIN transactions t ON t.id = m.txn_id JOIN items i ON i.id = m.item_id LEFT JOIN uom_sets us ON us.id = i.uom_set_id
+                      WHERE $w $sf
+                      GROUP BY m.txn_id, m.txn_line_id, t.txn_type, t.txn_no, t.txn_date, m.site_id, t.site2_id, m.item_id, i.code, i.name, us.base_unit, i.unit, m.production_date, m.expiry_date
+                      ORDER BY t.txn_date, t.id, m.txn_line_id LIMIT 20000", $p);
+    // the crates moved with each line, by their dates (a line of crates may hold more than one date group)
+    $crates = [];
+    if ($rows && Crates::ready()) {
+        foreach (array_chunk(array_values(array_unique(array_map(fn($r) => (int)$r['txn_id'], $rows))), 500) as $chunk) {
+            [$in, $ip] = DB::in('tc', $chunk);
+            foreach (DB::all("SELECT m.txn_id, m.line_id, m.site_id, c.production_date AS p, c.expiry_date AS e, COUNT(*) AS n
+                                FROM crate_movements m JOIN crates c ON c.id = m.crate_id
+                               WHERE m.kind = 'transfer' AND m.txn_id IN $in GROUP BY m.txn_id, m.line_id, m.site_id, c.production_date, c.expiry_date", $ip) as $c) {
+                $crates[$c['txn_id'] . ':' . $c['line_id'] . ':' . $c['site_id']][Lots::key($c['p'] ?: null, $c['e'] ?: null)] = (int)$c['n'];
+            }
+        }
+    }
+    $sites = DB::pairs('SELECT id, name FROM sites');
+    // the date groups each line left in: the crates whose dates match none of them count on the line's first row
+    $keysOf = [];
+    foreach ($rows as $r) {
+        $keysOf[$r['txn_id'] . ':' . $r['txn_line_id'] . ':' . $r['site_id']][Lots::key($r['p'] ?: null, $r['e'] ?: null)] = true;
+    }
+    $seen = [];
+    $out = [];
+    foreach ($rows as $r) {
+        $ck = $r['txn_id'] . ':' . $r['txn_line_id'] . ':' . $r['site_id'];
+        $key = Lots::key($r['p'] ?: null, $r['e'] ?: null);
+        $n = $crates[$ck][$key] ?? 0;
+        if (!isset($seen[$ck])) {
+            $n += array_sum(array_diff_key($crates[$ck] ?? [], $keysOf[$ck]));
+            $seen[$ck] = true;
+        }
+        $days = $r['e'] ? (int)round((strtotime($r['e']) - strtotime($r['txn_date'])) / 86400) : null;
+        $out[] = [
+            'txn_id' => (int)$r['txn_id'], 'txn_type' => $r['txn_type'], 'date' => $r['txn_date'], 'doc' => (string)$r['txn_no'],
+            'site_id' => (int)$r['site_id'], 'site' => (string)($sites[$r['site_id']] ?? ''), 'site2_id' => (int)$r['site2_id'], 'to' => (string)($sites[$r['site2_id']] ?? ''),
+            'item_id' => (int)$r['item_id'], 'code' => (string)$r['code'], 'name' => (string)$r['name'], 'unit' => (string)$r['unit'] ?: 'unit',
+            'prod' => $r['p'], 'exp' => $r['e'], 'days' => $days, 'crates' => $n, 'qty' => round((float)$r['q'], 4), 'value' => r2((float)$r['v']),
+        ];
+    }
+    return $out;
+}
+
+/** v8: a detail row of a transfer report (the columns both reports share) */
+function dist_transfer_cells(array $r): array
+{
+    return [
+        'date' => $r['date'], 'doc' => $r['doc'], 'site' => $r['site'], 'item' => $r['code'], 'desc' => $r['name'], 'to' => $r['to'],
+        'prod' => $r['prod'], 'exp' => $r['exp'], 'days' => $r['days'], 'crates' => $r['crates'] ?: '', 'qty' => $r['qty'], 'unit' => $r['unit'], 'value' => $r['value'],
+        '_html' => ['site' => SiteMark::html($r['site_id'], $r['site'])],
+        '_links' => ['doc' => Report::txnLink(['txn_type' => $r['txn_type'], 'txn_id' => $r['txn_id']])],
+        '_class' => $r['days'] !== null && $r['days'] < 0 ? 'lot-expired-row' : ($r['days'] !== null && $r['days'] <= 3 ? 'lot-expiring-row' : ''),
+    ];
+}
+
+/** v8: the subtotal (or total) of some rows: crates, value, and the quantity when they share one unit */
+function dist_transfer_sum(array $rows, array $base): array
+{
+    $units = array_values(array_unique(array_column($rows, 'unit')));
+    $byUnit = [];
+    foreach ($rows as $r) {
+        $byUnit[$r['unit']] = ($byUnit[$r['unit']] ?? 0.0) + $r['qty'];
+    }
+    return $base + [
+        'crates' => array_sum(array_column($rows, 'crates')) ?: '',
+        'qty' => count($units) === 1 ? round($byUnit[$units[0]], 4) : '',
+        'unit' => count($units) === 1 ? $units[0] : implode(', ', array_map(fn($u, $q) => Crates::fig($q, (string)$u) . ' ' . $u, array_keys($byUnit), $byUnit)),
+        'value' => r2(array_sum(array_column($rows, 'value'))),
+    ];
+}
+
+function dist_transfer_def(string $by): array
+{
+    return [
+        'filters' => ['range', 'site', 'item'],
+        'filter_labels' => ['site' => 'From site'],
+        'default_dates' => 'this_month',
+        'sortable' => false,
+        'extra_filters' => [
+            'to_site' => ['To site', fn() => Lookup::sites(false), 'All'],
+            'doc' => ['Documents', fn() => ['dispatch' => 'Dispatch Inventory', 'transfer' => 'Transfer Inventory'], 'Both'],
+        ],
+        'run' => function (array $f) use ($by): array {
+            $all = dist_transfer_rows($f);
+            $groups = [];
+            foreach ($all as $r) {
+                $k = $by === 'site' ? $r['site'] . "\0" . $r['site_id'] : $r['code'];
+                $groups[$k][] = $r;
+            }
+            ksort($groups, SORT_NATURAL | SORT_FLAG_CASE);
+            $rows = [];
+            $chart = [];
+            foreach ($groups as $list) {
+                $first = $list[0];
+                if ($by === 'site') {
+                    // within a site, item by item
+                    usort($list, fn($a, $b) => [$a['code'], $a['date'], $a['txn_id']] <=> [$b['code'], $b['date'], $b['txn_id']]);
+                    $rows[] = ['date' => $first['site'], '_class' => 'group-row', '_html' => ['date' => SiteMark::html($first['site_id'], $first['site'])]];
+                } else {
+                    $rows[] = ['date' => $first['code'] . '  ' . $first['name'], '_class' => 'group-row'];
+                }
+                foreach ($list as $r) {
+                    $rows[] = dist_transfer_cells($r);
+                }
+                $label = $by === 'site' ? $first['site'] : $first['code'];
+                $rows[] = dist_transfer_sum($list, ['date' => 'Subtotal ' . $label, '_class' => 'subtotal-row']);
+                $chart[$label] = round(array_sum(array_column($list, 'qty')), 2);
+            }
+            $cols = [['key' => 'date', 'label' => 'Date', 'type' => 'date'], ['key' => 'doc', 'label' => 'Document no.']];
+            if ($by === 'site') {
+                $cols[] = ['key' => 'item', 'label' => 'Item code'];
+                $cols[] = ['key' => 'desc', 'label' => 'Description', 'optional' => true];
+            } else {
+                $cols[] = ['key' => 'site', 'label' => 'From site'];
+            }
+            $cols = array_merge($cols, [
+                ['key' => 'to', 'label' => 'To site'], ['key' => 'prod', 'label' => 'Production date', 'type' => 'date'], ['key' => 'exp', 'label' => 'Expiry date', 'type' => 'date'],
+                ['key' => 'days', 'label' => 'Days left when sent', 'type' => 'int'], ['key' => 'crates', 'label' => 'Crates', 'type' => 'int'],
+                ['key' => 'qty', 'label' => 'Quantity', 'type' => 'kg'], ['key' => 'unit', 'label' => 'U/M'], ['key' => 'value', 'label' => 'Value at cost', 'type' => 'money', 'sensitive' => 'cost', 'optional' => true],
+            ]);
+            arsort($chart);
+            return [
+                'columns' => $cols, 'rows' => $rows,
+                'totals' => $all ? dist_transfer_sum($all, ['date' => 'TOTAL']) : null,
+                'chart' => $chart ? ['bars' => array_slice($chart, 0, 12, true), 'bars_title' => $by === 'site' ? 'Quantity sent by site' : 'Quantity sent by item code', 'bars_format' => 'qty'] : null,
+                'notes' => 'The stock sent by Transfer Inventory and Dispatch Inventory from ' . fdate($f['from']) . ' to ' . fdate($f['to']) . ', '
+                    . ($by === 'site' ? 'grouped by the site it left (a dispatch may gather stock from many sites), item by item, with a subtotal per site.' : 'grouped by item code, with a subtotal per item code and the site each line left.')
+                    . ' Each line shows the production and expiry dates it went with and the days it had left to its expiry when it was sent; rows in red had expired.'
+                    . ' IT- numbers are Transfer Inventory, DSP- numbers Dispatch Inventory.',
+            ];
+        },
+    ];
+}
+
+Report::define('transfer_item', dist_transfer_def('item'));
+Report::define('transfer_site', dist_transfer_def('site'));
